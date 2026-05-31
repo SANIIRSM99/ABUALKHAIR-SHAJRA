@@ -1,0 +1,3127 @@
+let profiles = [];
+let isDataLoaded = false; // 🔥 important
+
+try {
+    let profiles = JSON.parse(localStorage.getItem("profiles")) || [
+        {
+            name: "👑Hazrat Sultan Abulkhair Shah👑",
+            fatherName: "Sher Muhammad",
+            cnic: "ROOT001",
+            fatherCNIC: "ROOT1001",
+            bloodGroup: "O+",
+            phone: "123456789",
+            address: "Basti Sultan Abulkhair Shah",
+            dob: "1500-01-01",
+            gender: "male",
+            status: "deceased",
+            deathDate: "1563-01-01",
+            note: "یہ حضرت علیؓ کے بیٹے حضرت عباسؓ کے شجرہ سے ہیں",
+            photo: ""
+        }
+    ];
+
+    // Profile customization (color & crown) for cpabk
+    let profileCustomization = {};
+    try { profileCustomization = JSON.parse(localStorage.getItem("profileCustomization") || "{}"); } catch(_) { profileCustomization = {}; }
+
+    function saveProfileCustomization() {
+        localStorage.setItem("profileCustomization", JSON.stringify(profileCustomization));
+        try {
+            if (typeof firebase !== "undefined" && firebase.firestore) {
+                firebase.firestore()
+                    .collection("settings")
+                    .doc("profileCustomization")
+                    .set({ data: profileCustomization, updatedAt: new Date().toISOString() }, { merge: true })
+                    .catch(err => console.error("Profile customization Firestore save failed:", err));
+            }
+        } catch (err) {
+            console.error("Profile customization sync error:", err);
+        }
+    }
+
+    let profileCustomizationListenerStarted = false;
+    function listenProfileCustomizationRealtime() {
+        if (profileCustomizationListenerStarted) return;
+        try {
+            if (typeof firebase === "undefined" || !firebase.firestore) return;
+            profileCustomizationListenerStarted = true;
+            firebase.firestore()
+                .collection("settings")
+                .doc("profileCustomization")
+                .onSnapshot((doc) => {
+                    if (doc.exists) {
+                        const cloudData = doc.data() || {};
+                        profileCustomization = cloudData.data || {};
+                        localStorage.setItem("profileCustomization", JSON.stringify(profileCustomization));
+                        try { rerenderAllTrees(); } catch (_) {}
+                        if (typeof renderTree === "function") {
+                            try { renderTree(); } catch (_) {}
+                        }
+                    } else if (profileCustomization && Object.keys(profileCustomization).length > 0) {
+                        saveProfileCustomization();
+                    }
+                }, (err) => {
+                    profileCustomizationListenerStarted = false;
+                    console.error("Profile customization realtime error:", err);
+                });
+        } catch (err) {
+            profileCustomizationListenerStarted = false;
+            console.error("Profile customization listener failed:", err);
+        }
+    }
+
+    function startProfileCustomizationRealtimeWhenReady() {
+        if (typeof firebase !== "undefined" && firebase.firestore) {
+            listenProfileCustomizationRealtime();
+        } else {
+            setTimeout(startProfileCustomizationRealtimeWhenReady, 500);
+        }
+    }
+
+    function getNodeStyle(cnic) {
+        const cfg = profileCustomization[cnic];
+        return cfg && cfg.color ? ` style="border-color:${cfg.color}; box-shadow: 0 0 0 2px ${cfg.color}22 inset;"` : "";
+    }
+
+    function getCrownHTML(cnic) {
+        const cfg = profileCustomization[cnic];
+        return cfg && cfg.crown ? `<span class="crown-badge" title="Crowned">👑</span>` : "";
+    }
+
+    function cleanCnicInput(value) {
+        return String(value || "").replace(/v/ig, "").trim();
+    }
+
+    function hasVerifiedMark(profileOrCnic) {
+        if (profileOrCnic && typeof profileOrCnic === "object") {
+            const verified = String(profileOrCnic.verified || profileOrCnic.verificationStatus || "").toLowerCase();
+            return profileOrCnic.verified === true || verified === "v" || verified === "verified" || /v/i.test(String(profileOrCnic.cnic || ""));
+        }
+        return /v/i.test(String(profileOrCnic || ""));
+    }
+
+    function getVerifiedHTML(profileOrCnic) {
+        if (!hasVerifiedMark(profileOrCnic)) return "";
+        return `<span class="verified-badge" title="Verify" aria-label="Verify"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path class="verified-shape" d="M12 1.8l2.22 1.68 2.78-.18 1.08 2.56 2.54 1.12-.2 2.78L22.1 12l-1.68 2.24.2 2.78-2.54 1.12L17 20.7l-2.78-.18L12 22.2l-2.22-1.68-2.78.18-1.08-2.56-2.54-1.12.2-2.78L1.9 12l1.68-2.24-.2-2.78 2.54-1.12L7 3.3l2.78.18L12 1.8z"></path><path class="verified-check" d="M7.35 12.35l3.05 3.05 6.25-6.8"></path></svg></span>`;
+    }
+
+    function getNameWithVerifiedHTML(name, profileOrCnic, fallback) {
+        const displayName = name || fallback || "";
+        return `<span class="verified-name" dir="auto">${displayName}${getVerifiedHTML(profileOrCnic)}</span>`;
+    }
+
+    function getPhotoURL(person){
+        try {
+            if (person && person.photo) return person.photo;
+            const g = (person && person.gender) ? person.gender.toLowerCase() : "male";
+            return g === "female" ? "default_female.svg" : "default_male.svg";
+        } catch(e){ return "default_male.svg"; }
+    }
+
+    function setCustomColor(cnic) {
+        if (currentUser !== "cpabk") return;
+        const prev = (profileCustomization[cnic] && profileCustomization[cnic].color) || "";
+        const color = prompt("Enter a color (e.g. #ff9900 or green):", prev);
+        if (color === null) return;
+        profileCustomization[cnic] = profileCustomization[cnic] || {};
+        profileCustomization[cnic].color = color.trim();
+        saveProfileCustomization();
+        // re-render subtree if open or main tree
+        try { rerenderAllTrees(); } catch(_) {}
+    }
+
+    function toggleCrown(cnic) {
+        if (currentUser !== "cpabk") return;
+        profileCustomization[cnic] = profileCustomization[cnic] || {};
+        profileCustomization[cnic].crown = !profileCustomization[cnic].crown;
+        saveProfileCustomization();
+        try { rerenderAllTrees(); } catch(_) {}
+    }
+
+    // Rerender helper (safe no-op if functions absent)
+    function rerenderAllTrees() {
+        // Rebuild main tree if container exists
+        const rootEl = document.getElementById("treeContainer");
+        if (rootEl && typeof buildRootTree === "function") {
+            buildRootTree();
+        }
+        // Re-render open subtree modal if present
+        const subTreeModal = document.getElementById("subTreeModal");
+        if (subTreeModal && subTreeModal.style.display === "flex") {
+            const node = subTreeModal.querySelector(".root-node");
+            if (node) {
+                const cnic = node.getAttribute("data-cnic");
+                showSubTree(cnic);
+            }
+        }
+    }
+
+    let currentUser = localStorage.getItem("currentUser") || "";
+
+    function isCpabkUser() {
+        return String(currentUser || "").toLowerCase() === "cpabk";
+    }
+
+    function isFemaleProfile(person) {
+        const gender = String(person && (person.gender || person.Gender || person.sex) || "").toLowerCase().trim();
+        return ["female", "f", "woman", "عورت"].includes(gender);
+    }
+
+    function canSeeProfile(person) {
+        return isCpabkUser() || !isFemaleProfile(person);
+    }
+
+    function visibleProfiles() {
+        return (Array.isArray(profiles) ? profiles : []).filter(canSeeProfile);
+    }
+
+    function initLoginGuard(){
+        try{
+            const u = localStorage.getItem("currentUser") || "";
+            if (u && !["abk","cpabk"].includes(String(u).toLowerCase())) {
+                localStorage.removeItem("currentUser");
+            }
+        }catch(e){}
+    }
+    try{ initLoginGuard(); }catch(_){}
+
+    let currentMonth = new Date();
+    let fundsReceived = JSON.parse(localStorage.getItem(getFundsKey("fundsReceived", currentMonth))) || [];
+    let fundsUsed = JSON.parse(localStorage.getItem(getFundsKey("fundsUsed", currentMonth))) || [];
+    let currentBalance = parseFloat(localStorage.getItem(getBalanceKey(currentMonth))) || 0;
+
+    // Generate localStorage key for funds by month-year
+    function getFundsKey(type, date) {
+        const month = date.getMonth() + 1; // 1-12
+        const year = date.getFullYear();
+        return `${type}_${year}-${month.toString().padStart(2, '0')}`;
+    }
+
+    // Generate localStorage key for balance by month-year
+    function getBalanceKey(date) {
+        const month = date.getMonth() + 1;
+        const year = date.getFullYear();
+        return `balance_${year}-${month.toString().padStart(2, '0')}`;
+    }
+
+    // Save Profiles to LocalStorage
+    function saveProfiles() {
+        try {
+            localStorage.setItem("profiles", JSON.stringify(profiles));
+        } catch (e) {
+            console.error("Failed to save profiles to localStorage:", e);
+            alert("Error saving profiles. Check browser storage permissions.");
+        }
+    }
+
+    // Save Funds and Balance to LocalStorage
+    function saveFunds() {
+        try {
+            localStorage.setItem(getFundsKey("fundsReceived", currentMonth), JSON.stringify(fundsReceived));
+            localStorage.setItem(getFundsKey("fundsUsed", currentMonth), JSON.stringify(fundsUsed));
+            localStorage.setItem(getBalanceKey(currentMonth), currentBalance.toFixed(2));
+        } catch (e) {
+            console.error("Failed to save funds to localStorage:", e);
+            alert("Error saving funds. Check browser storage permissions.");
+        }
+    }
+
+    // Show Duplicate Alert
+    function showDuplicateAlert(msg) {
+        try {
+            const alertBox = document.getElementById("duplicateAlert");
+            if (alertBox) {
+                alertBox.textContent = msg;
+                alertBox.style.display = "block";
+                setTimeout(() => (alertBox.style.display = "none"), 5000);
+            } else {
+                console.error("Duplicate alert box not found in DOM");
+                alert("Duplicate alert box not found!");
+            }
+        } catch (e) {
+            console.error("Error showing duplicate alert:", e);
+        }
+    }
+
+    // LOGIN
+    function login() {
+        try {
+            const user = document.getElementById("username")?.value.trim();
+            const pass = document.getElementById("password")?.value.trim();
+            const errorBox = document.getElementById("loginError");
+
+            if (!user || !pass || !errorBox) {
+                console.error("Login inputs or error box not found");
+                alert("Login form elements missing!");
+                return;
+            }
+listenProfilesRealtime();
+listenProfileCustomizationRealtime();
+
+            if ((user && pass) && ((user.toLowerCase() === "abk" && pass === "bastiabk") ||(user.toLowerCase() === "sani" && pass === "hashmi") || (user.toLowerCase() === "cpabk" && pass === "985973abk"))) {
+                currentUser = user;
+                localStorage.setItem("currentUser", currentUser);
+                document.getElementById("loginBox").style.display = "none";
+                document.getElementById("app").style.display = "block";
+                if (window.location.pathname.includes("funds.html")) {
+                    renderFunds();
+                } else {
+                    renderTree();
+                }
+            } else {
+                errorBox.textContent = "Invalid Username or Password!";
+            }
+        } catch (e) {
+            console.error("Login error:", e);
+            alert("Error during login: " + e.message);
+        }
+    }
+
+    // LOGOUT
+    function logout() {
+        try {
+            currentUser = "";
+            localStorage.removeItem("currentUser");
+            document.getElementById("app").style.display = "none";
+            document.getElementById("loginBox").style.display = "block";
+            window.location.href = "index.html";
+        } catch (e) {
+            console.error("Logout error:", e);
+            alert("Error during logout: " + e.message);
+        }
+    }
+
+    // FORM OPEN/CLOSE
+    function openForm(fatherCnic = "") {
+        try {
+            const formPanel = document.getElementById("formPanel");
+            const profileForm = document.getElementById("profileForm");
+            if (!formPanel || !profileForm) {
+                console.error("Form panel or profile form not found");
+                alert("Form elements missing!");
+                return;
+            }
+            formPanel.classList.add("active");
+            profileForm.reset();
+            document.getElementById("editCnic").value = "";
+            document.getElementById("fatherCnic").value = typeof cleanCnicInput === "function" ? cleanCnicInput(fatherCnic) : fatherCnic;
+            const verificationSelect = document.getElementById("verificationStatus");
+            if (verificationSelect) verificationSelect.value = "n";
+
+            if (fatherCnic) {
+                const father = profiles.find(p => p.cnic === fatherCnic);
+                if (father && isFemaleProfile(father)) {
+                    alert("Female profile ke under new profile add nahi ho sakti. Tree father line se chalega.");
+                    return;
+                }
+                if (father) document.getElementById("fatherName").value = father.name;
+            }
+
+            document.getElementById("marriedSection").style.display = "none";
+            document.getElementById("spouseCnic").style.display = "none";
+            document.getElementById("spouseName").style.display = "none";
+        } catch (e) {
+            console.error("Error opening form:", e);
+            alert("Error opening form: " + e.message);
+        }
+    }
+
+    function closeForm() {
+        try {
+            const formPanel = document.getElementById("formPanel");
+            if (formPanel) formPanel.classList.remove("active");
+        } catch (e) {
+            console.error("Error closing form:", e);
+        }
+    }
+
+    // PROFILE MODAL
+   function showProfile(cnic) {
+        try {
+            if (!Array.isArray(profiles)) {
+                alert("Profiles data not available.");
+                return;
+            }
+
+            const p = profiles.find(i => i.cnic === cnic);
+            if (!p) {
+                alert("Profile not found!");
+                return;
+            }
+            if (!canSeeProfile(p)) {
+                alert("Only cpabk can view female profiles.");
+                return;
+            }
+
+            const safeFormatDMY = (d) => {
+                try {
+                    if (!d) return "-";
+                    const dt = new Date(d);
+                    if (isNaN(dt)) return "-";
+                    return `${String(dt.getDate()).padStart(2, "0")}-${String(dt.getMonth() + 1).padStart(2, "0")}-${dt.getFullYear()}`;
+                } catch (e) {
+                    return "-";
+                }
+            };
+
+            const age = calculateAge(p.dob, p.status === "deceased" ? p.deathDate : null);
+            const eligible = isEligibleForVote(p);
+            const photoURL = getPhotoURL(p);
+            const formattedDob = p.dob ? safeFormatDMY(new Date(p.dob)) : "-";
+            const formattedDeathDate = p.deathDate && p.status === "deceased" ? safeFormatDMY(new Date(p.deathDate)) : "";
+
+            let genderText = "Unknown";
+            let genderIcon = "";
+            const genderRaw = (p.gender || "").toLowerCase().trim();
+            if (["female", "f", "woman", "عورت"].includes(genderRaw)) {
+                genderText = "Female";
+                genderIcon = " 👩";
+            } else if (["male", "m", "man", "مرد"].includes(genderRaw)) {
+                genderText = "Male";
+                genderIcon = " 👨";
+            } else if (genderRaw) {
+                genderText = genderRaw.charAt(0).toUpperCase() + genderRaw.slice(1);
+            }
+
+            const waPhone = p.phone ? p.phone.replace(/[^0-9+]/g, "") : "";
+            const whatsappButton = waPhone ? `<a href="https://wa.me/${waPhone.replace(/^\+/, '')}" class="whatsapp-btn" target="_blank" rel="noopener" style="display:inline-block;margin-left:8px;padding:4px 8px;background-color:#25D366;color:white;border-radius:4px;text-decoration:none;font-weight:bold;">WhatsApp</a>` : "";
+
+            const canShowSubtreeBtn = !(p.gender && ["female", "f", "عورت"].includes(p.gender.toLowerCase()) && currentUser !== "cpabk");
+
+
+
+           const modalBody = `
+<style>
+    .profile-wrapper {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    .profile-title {
+        text-align: center;
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e5e7eb;
+        color: #0ea5e9;
+    }
+
+    .profile-cover {
+        position: relative;
+        min-height: 170px;
+        margin: -20px -20px 55px -20px;
+        border-radius: 16px 16px 0 0;
+        background-image: linear-gradient(180deg, rgba(0,0,0,0.08), rgba(0,0,0,0.42)), url('darbar.jpeg');
+        background-size: cover;
+        background-position: center;
+        overflow: visible;
+    }
+
+    .profile-cover .profile-photo {
+        position: absolute;
+        left: 50%;
+        bottom: -45px;
+        transform: translateX(-50%);
+        display:block;
+        width:100px;
+        height:100px;
+        border-radius:50%;
+        object-fit:cover;
+        border:4px solid #ffffff;
+        background:#ffffff;
+        box-shadow: 0 10px 22px rgba(0,0,0,0.25);
+    }
+
+    .profile-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    .profile-table th {
+        background: #0ea5e9;
+        color: white;
+        padding: 10px;
+        text-align: left;
+        font-weight: 600;
+    }
+
+    .profile-table td {
+        padding: 10px;
+        border: 1px solid #e5e7eb;
+        vertical-align: middle;
+    }
+
+    .profile-table tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    .label-cell {
+        width: 38%;
+        font-weight: 600;
+        color: #374151;
+        background: #f1f5f9;
+    }
+
+    .label-cell i {
+        margin-right: 8px;
+        color: #0ea5e9;
+        width: 18px;
+        text-align: center;
+    }
+
+    /* 🔥 Profession Highlight */
+    .profession-row {
+        background: #e0f2fe !important;
+    }
+
+    .profession-row .label-cell {
+        background: #bae6fd !important;
+        color: #0369a1;
+    }
+
+    .profession-value {
+        font-weight: 700;
+        color: #0284c7;
+    }
+
+    .status-alive { color: #16a34a; font-weight: bold; }
+    .status-deceased { color: #dc2626; font-weight: bold; }
+
+    .vote-eligible { color: #16a34a; font-weight: bold; }
+    .vote-not { color: #dc2626; font-weight: bold; }
+
+    .profile-actions {
+        text-align:center;
+        margin-top:20px;
+    }
+
+    .btn-modern {
+        padding:8px 14px;
+        border:none;
+        border-radius:6px;
+        cursor:pointer;
+        font-size:13px;
+        font-weight:600;
+        margin:5px;
+        transition:0.2s;
+    }
+
+    .btn-blue { background:#0ea5e9; color:white; }
+    .btn-purple { background:#6f42c1; color:white; }
+    .btn-red { background:#d62828; color:white; }
+
+    .btn-modern i {
+        margin-right:6px;
+    }
+
+    .btn-modern:hover {
+        opacity:0.85;
+    }
+</style>
+
+<div class="profile-wrapper">
+
+    <div class="profile-cover">
+        <img src="${photoURL}" class="profile-photo"
+             onerror="this.src='default_male.svg'">
+    </div>
+
+    <div class="profile-title">
+        ${typeof getCrownHTML === "function" ? getCrownHTML(p.cnic) : ""} ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(p.name, p, "-") : (p.name || "-")} ${genderIcon}
+    </div>
+
+    <table class="profile-table">
+        <tr>
+            <th colspan="2"><i class="fa fa-id-badge"></i> Profile Information</th>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-user"></i>Father</td>
+            <td>${p.fatherName || "-"}</td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-id-card"></i>CNIC</td>
+            <td>${p.cnic || "-"}</td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-venus-mars"></i>Gender</td>
+            <td>${genderText}</td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-droplet"></i>Blood Group</td>
+            <td style="color:red;font-weight:bold;">
+                ${p.bloodGroup || "-"}
+            </td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-phone"></i>Phone</td>
+            <td>
+                ${p.phone ? `<a href="tel:${p.phone}">${p.phone}</a> ${whatsappButton}` : "-"}
+            </td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-location-dot"></i>Address</td>
+            <td>${p.address || "-"}</td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-cake-candles"></i>Date of Birth</td>
+            <td>${formattedDob}</td>
+        </tr>
+
+        ${formattedDeathDate ? `
+        <tr>
+            <td class="label-cell"><i class="fa fa-cross"></i>Date of Death</td>
+            <td>${formattedDeathDate}</td>
+        </tr>` : ""}
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-hourglass-half"></i>Age</td>
+            <td>${age !== null ? age + " years" : "-"}</td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-heartbeat"></i>Status</td>
+            <td class="${p.status === 'alive' ? 'status-alive' : 'status-deceased'}">
+                ${p.status || "-"}
+            </td>
+        </tr>
+
+        ${p.spouseName ? `
+        <tr>
+            <td class="label-cell"><i class="fa fa-ring"></i>Spouse</td>
+            <td>${p.spouseName}</td>
+        </tr>` : ""}
+
+        <!-- 🔥 Profession Highlighted -->
+        <tr class="profession-row">
+            <td class="label-cell">
+                <i class="fa fa-briefcase"></i>Profession
+            </td>
+            <td class="profession-value">
+                ${p.profession || "-"}
+            </td>
+        </tr>
+
+        <tr>
+            <td class="label-cell"><i class="fa fa-check-circle"></i>Vote Status</td>
+            <td class="${eligible ? 'vote-eligible' : 'vote-not'}">
+                ${eligible ? "✔ Eligible" : "❌ Not Eligible"}
+            </td>
+        </tr>
+
+        ${p.shajraLine ? `
+        <tr>
+            <td class="label-cell"><i class="fa fa-tree"></i>Shajra</td>
+            <td style="font-family:'Jameel Noori Nastaleeq',serif;color:#ea580c;">
+                ${p.shajraLine}
+            </td>
+        </tr>` : ""}
+
+        ${p.note ? `
+        <tr>
+            <td class="label-cell"><i class="fa fa-note-sticky"></i>Note</td>
+            <td style="color:#0f766e;font-weight:600;">
+                ${p.note}
+            </td>
+        </tr>` : ""}
+    </table>
+
+    <!-- 🔥 Developer Footer -->
+    <div class="profile-footer">
+        <div class="profile-footer-header">
+            <i class="fa fa-code"></i> Developer Information
+        </div>
+        <div class="profile-footer-body">
+            Developed by <strong>SANI HASHMI</strong> |
+            <i class="fa fa-phone"></i> 0311-7323373
+            <br>
+            © 2026 Sultan Abulkhair Shah Welfare Society (Jhang)
+        </div>
+    </div>
+
+    <div class="profile-actions">
+
+
+    <div class="profile-actions">
+        ${canShowSubtreeBtn ? `
+        <button class="btn-modern btn-blue" 
+            data-action="subtree" 
+            data-cnic="${p.cnic}">
+            <i class="fa fa-sitemap"></i> View Sub Tree
+        </button>` : ""}
+
+        ${currentUser === "cpabk" ? `
+        <button onclick="editProfile('${p.cnic}')" 
+            class="btn-modern btn-purple">
+            <i class="fa fa-pen"></i> Edit
+        </button>
+        <button onclick="deleteProfile('${p.cnic}')" 
+            class="btn-modern btn-red">
+            <i class="fa fa-trash"></i> Delete
+        </button>` : ""}
+    </div>
+
+</div>
+`;
+
+
+            const modal = document.getElementById("profileModal");
+            const modalBodyElem = document.getElementById("modalBody");
+
+            if (!modal || !modalBodyElem) {
+                alert("Profile modal elements not found!");
+                return;
+            }
+
+            modalBodyElem.innerHTML = modalBody;
+            modal.style.display = "flex";
+            modal.setAttribute('aria-hidden', 'false');
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-label', `Profile for ${p.name || 'Unknown'}`);
+        } catch (e) {
+            console.error("Error showing profile:", e);
+            alert("Error showing profile: " + e.message);
+        }
+    }
+
+
+
+    // Close profile modal
+    function closeModal() {
+        try {
+            const modal = document.getElementById("profileModal");
+            if (modal) {
+                modal.style.display = "none";
+                modal.setAttribute('aria-hidden', 'true');
+            }
+        } catch (e) {
+            console.error("Error closing modal:", e);
+        }
+    }
+    // Calculate Age
+    function calculateAge(dob, deathDate = null) {
+        try {
+            if (!dob) return null;
+            const birth = new Date(dob);
+            const endDate = deathDate ? new Date(deathDate) : new Date();
+            let age = endDate.getFullYear() - birth.getFullYear();
+            const m = endDate.getMonth() - birth.getMonth();
+            if (m < 0 || (m === 0 && endDate.getDate() < birth.getDate())) age--;
+            return age;
+        } catch (e) {
+            console.error("Error calculating age:", e);
+            return null;
+        }
+    }
+
+    // Check Vote Eligibility
+    function isEligibleForVote(profile) {
+        try {
+            if (profile.status === "deceased") return false;
+            const age = calculateAge(profile.dob);
+            return age !== null && age >= 18;
+        } catch (e) {
+            console.error("Error checking vote eligibility:", e);
+            return false;
+        }
+    }
+
+    // Update Vote Summary
+    function updateVoteSummary() {
+        try {
+            const totalProfiles = profiles.length;
+            const aliveProfiles = profiles.filter(p => p.status === "alive");
+            const voteEligible = aliveProfiles.filter(p => isEligibleForVote(p));
+
+            const voteSummary = document.getElementById("voteSummary");
+            if (voteSummary) {
+                voteSummary.innerHTML = `
+                    <b>Total:</b> ${totalProfiles} | 
+                    <b>Alive:</b> ${aliveProfiles.length} | 
+                    <b>Eligible Votes:</b> ${voteEligible.length}
+                `;
+            } else {
+                console.error("Vote summary element not found");
+            }
+        } catch (e) {
+            console.error("Error updating vote summary:", e);
+        }
+    }
+
+    function getBase64(file, callback) {
+        try {
+            const reader = new FileReader();
+            reader.onload = e => callback(e.target.result);
+            reader.readAsDataURL(file);
+        } catch (e) {
+            console.error("Error reading file:", e);
+        }
+    }
+
+    document.getElementById("profileForm")?.addEventListener("submit", function (e) {
+        try {
+            e.preventDefault();
+            const photoFile = document.getElementById("profilePhoto")?.files[0];
+            if (photoFile) {
+                getBase64(photoFile, base64Image => window.saveProfile(base64Image));
+            } else {
+                window.saveProfile("");
+            }
+        } catch (e) {
+            console.error("Error submitting profile form:", e);
+            alert("Error saving profile: " + e.message);
+        }
+    });
+  // --------- EDIT PROFILE -----------
+function editProfile(cnic) {
+    try {
+        const person = profiles.find(p => p.cnic === cnic);
+
+        if (!person) {
+            showNotify(
+                "پروفائل نہیں ملا ❌",
+                "یہ پروفائل موجود نہیں ہے یا حذف ہو چکا ہے۔"
+            );
+            return;
+        }
+
+        openForm();
+        document.getElementById("formTitle").innerText = "Edit Profile";
+
+        // Basic Fields
+        document.getElementById("editCnic").value = person.cnic || "";
+        document.getElementById("name").value = person.name || "";
+        document.getElementById("fatherName").value = person.fatherName || "";
+        document.getElementById("profession").value = person.profession || "";
+        document.getElementById("cnic").value = typeof cleanCnicInput === "function" ? cleanCnicInput(person.cnic) : (person.cnic || "");
+        const verificationSelect = document.getElementById("verificationStatus");
+        if (verificationSelect) verificationSelect.value = (typeof hasVerifiedMark === "function" && hasVerifiedMark(person)) ? "v" : "n";
+        document.getElementById("fatherCnic").value = person.fatherCNIC || "";
+        document.getElementById("bloodGroup").value = person.bloodGroup || "";
+        document.getElementById("phone").value = person.phone || "";
+        document.getElementById("address").value = person.address || "";
+        document.getElementById("dob").value = person.dob || "";
+        document.getElementById("gender").value = person.gender || "";
+
+        // ---------------- Married Section ----------------
+        const marriedSection = document.getElementById("marriedSection");
+        if (person.gender === "female") {
+            marriedSection.style.display = "block";
+        } else {
+            marriedSection.style.display = "none";
+        }
+
+        const marriedRadio = document.querySelector(
+            `input[name="married"][value="${person.married || "unmarried"}"]`
+        );
+        if (marriedRadio) marriedRadio.checked = true;
+
+        const spouseCnicField = document.getElementById("spouseCnic");
+        const spouseNameField = document.getElementById("spouseName");
+
+        if (person.married === "married") {
+            spouseCnicField.style.display = "block";
+            spouseNameField.style.display = "block";
+        } else {
+            spouseCnicField.style.display = "none";
+            spouseNameField.style.display = "none";
+        }
+
+        spouseCnicField.value = person.spouseCnic || "";
+        spouseNameField.value = person.spouseName || "";
+
+        // ---------------- Status Section ----------------
+        const statusRadio = document.querySelector(
+            `input[name="status"][value="${person.status}"]`
+        );
+        if (statusRadio) statusRadio.checked = true;
+
+        const deathDateField = document.getElementById("deathDate");
+        if (person.status === "deceased") {
+            deathDateField.style.display = "block";
+        } else {
+            deathDateField.style.display = "none";
+        }
+        deathDateField.value = person.deathDate || "";
+
+        // ---------------- PHOTO SECTION ----------------
+        const previewImg = document.getElementById("previewImg");
+        const oldPhotoInput = document.getElementById("oldPhoto");
+
+        if (person.photo) {
+            oldPhotoInput.value = person.photo;
+            previewImg.src = person.photo;
+            previewImg.style.display = "block";
+        } else {
+            oldPhotoInput.value = "";
+            previewImg.src = "";
+            previewImg.style.display = "none";
+        }
+
+        // Shajra Line
+        document.getElementById("addShajraLine").value = person.shajraLine || "";
+
+    } catch (e) {
+        console.error("Error editing profile:", e);
+        showNotify(
+            "خرابی ❌",
+            "پروفائل کھولنے میں مسئلہ پیش آیا۔"
+        );
+    }
+}
+
+// --------- SAVE PROFILE -----------
+function handlePhotoSave() {
+    const photoInput = document.getElementById("profilePhoto");
+    if (photoInput.files && photoInput.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            window.saveProfile(e.target.result); // use new photo
+        }
+        reader.readAsDataURL(photoInput.files[0]);
+    } else {
+        // Use old photo if new not selected
+        const oldPhoto = document.getElementById("oldPhoto")?.value || "";
+        window.saveProfile(oldPhoto);
+    }
+}
+
+function saveProfile(photoData) {
+    try {
+        const editCnic     = document.getElementById("editCnic")?.value.trim();
+        const name         = document.getElementById("name")?.value.trim();
+        const fatherName   = document.getElementById("fatherName")?.value.trim();
+        const cnic         = document.getElementById("cnic")?.value.trim();
+        const fatherCnic   = document.getElementById("fatherCnic")?.value.trim();
+        const bloodGroup   = document.getElementById("bloodGroup")?.value;
+        const phone        = document.getElementById("phone")?.value.trim();
+        const address      = document.getElementById("address")?.value.trim();
+        const profession   = document.getElementById("profession")?.value.trim();
+        const dob          = document.getElementById("dob")?.value;
+        const gender       = document.getElementById("gender")?.value;
+        const married      = document.querySelector('input[name="married"]:checked')?.value || "";
+        const spouseCnic   = document.getElementById("spouseCnic")?.value.trim();
+        const spouseName   = document.getElementById("spouseName")?.value.trim();
+        const shajraLine   = document.getElementById("addShajraLine")?.value.trim() || "";
+        const status       = document.querySelector('input[name="status"]:checked')?.value;
+        const deathDate    = document.getElementById("deathDate")?.value;
+
+        if (!name || !cnic || !status) {
+            showNotify(
+                "ضروری معلومات مکمل کریں ⚠️",
+                "نام، CNIC اور حیثیت لازمی ہیں۔"
+            );
+            return;
+        }
+
+        // Duplicate Check
+        if (!editCnic) {
+            const existing = profiles.find(p => p.cnic === cnic);
+            if (existing) {
+                showNotify(
+                    "ڈپلیکیٹ CNIC ⚠️",
+                    `یہ CNIC "${cnic}" پہلے سے استعمال میں ہے۔
+                    
+اس CNIC والا شخص:
+${existing.name || "نام دستیاب نہیں"}
+
+نیا پروفائل نہیں بنایا جا سکتا۔`
+                );
+                return;
+            }
+        } else {
+            if (editCnic !== cnic) {
+                const conflict = profiles.find(p => p.cnic === cnic);
+                if (conflict) {
+                    showNotify(
+                        "CNIC Conflict ⚠️",
+                        `یہ نیا CNIC "${cnic}" پہلے سے دوسرے شخص کے پاس ہے۔
+                        
+نام:
+${conflict.name || "نام دستیاب نہیں"}
+
+CNIC تبدیل نہیں کیا جا سکتا۔`
+                    );
+                    return;
+                }
+            }
+        }
+
+        const profileData = { 
+            profession, name, fatherName, cnic, fatherCNIC: fatherCnic, 
+            bloodGroup, phone, address, dob, gender, married, spouseCnic, spouseName, 
+            status, deathDate, shajraLine, 
+            photo: photoData
+        };
+
+        if (!editCnic) {
+            profiles.push(profileData);
+            showNotify("کامیابی ✓", "نیا پروفائل کامیابی سے شامل کر دیا گیا۔", "success");
+        } else {
+            const index = profiles.findIndex(p => p.cnic === editCnic);
+            if (index !== -1) {
+                if (!photoData && profileData.photo === "") {
+                    profileData.photo = profiles[index].photo;
+                }
+                profiles[index] = profileData;
+                showNotify("اپ ڈیٹ مکمل ✓", "پروفائل کامیابی سے اپ ڈیٹ ہو گیا۔", "success");
+            }
+        }
+
+        saveProfiles();
+        closeForm();
+        renderTree();
+
+    } catch (e) {
+        console.error("Error saving profile:", e);
+        showNotify("خرابی ❌", "پروفائل محفوظ کرنے میں مسئلہ پیش آیا۔");
+    }
+}
+
+// -------------------- OTHER LOGIC --------------------
+
+// Married Section toggle
+document.getElementById("gender")?.addEventListener("change", function() {
+    document.getElementById("marriedSection").style.display = this.value === "female" ? "block" : "none";
+});
+
+document.addEventListener("change", function(e){
+    if(e.target.name === "married"){
+        document.getElementById("spouseCnic").style.display = e.target.value === "married" ? "block" : "none";
+        document.getElementById("spouseName").style.display = e.target.value === "married" ? "block" : "none";
+    }
+});
+
+// Auto-fill spouse name
+document.getElementById("spouseCnic")?.addEventListener("input", function() {
+    const sCnic = this.value.trim();
+    const spouse = profiles.find(p => p.cnic === sCnic);
+    document.getElementById("spouseName").value = spouse ? spouse.name : "";
+});
+
+// Auto-fill father name
+document.getElementById("fatherCnic")?.addEventListener("input", function() {
+    const fCnic = this.value.trim();
+    const father = profiles.find(p => p.cnic === fCnic);
+    if (father && isFemaleProfile(father)) {
+        document.getElementById("fatherName").value = "";
+        showNotify?.("Invalid Father", "Female profile ke under child add nahi ho sakta.");
+        return;
+    }
+    document.getElementById("fatherName").value = father ? father.name : "";
+});
+
+// Show/hide death date
+document.querySelectorAll('input[name="status"]').forEach(radio => {
+    radio.addEventListener("change", function() {
+        const deathDateInput = document.getElementById("deathDate");
+        deathDateInput.style.display = this.value === "deceased" ? "block" : "none";
+        if(this.value === "alive") deathDateInput.value = "";
+    });
+});
+
+// Search logic
+document.getElementById("searchBox")?.addEventListener("input", debounce(function() {
+    const q = this.value.toLowerCase().trim();
+    const resultsBox = document.getElementById("searchResults");
+    if (!q) { resultsBox.style.display="none"; resultsBox.innerHTML=""; return; }
+
+    const bloodGroups = ["o+","o-","a+","a-","b+","b-","ab+","ab-"];
+    const maxResults = 50;
+    let results;
+
+    if(bloodGroups.includes(q)) {
+        results = visibleProfiles().filter(p=>p.status==="alive" && (p.bloodGroup || "").toLowerCase()===q);
+    } else {
+        results = visibleProfiles().filter(p=> (p.name && p.name.toLowerCase().includes(q)) || 
+                                       (p.cnic && p.cnic.toLowerCase().includes(q)) || 
+                                       (p.fatherName && p.fatherName.toLowerCase().includes(q)));
+    }
+
+    let html = results.slice(0,maxResults).map(r=>`
+        <p onclick="showProfile('${r.cnic}');document.getElementById('searchBox').value='';document.getElementById('searchResults').style.display='none';">
+            ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(r.name, r) : r.name} - ${r.cnic} (${r.bloodGroup})
+        </p>
+    `).join("");
+
+    resultsBox.innerHTML = html || "<p style='padding:8px;'>کوئی نتیجہ نہیں ملا</p>";
+    resultsBox.style.display = "block";
+},300));
+
+
+    // Root Profile update
+    try {
+        const rootProfile = profiles.find(p => p.cnic === "ROOT001");
+        if (rootProfile) {
+            rootProfile.note = "یہ حضرت علیؓ کے بیٹے حضرت عباسؓ کے شجرہ سے ہیں";
+            rootProfile.status = "deceased";
+            rootProfile.deathDate = "1563-01-01";
+            saveProfiles();
+        } else {
+            console.warn("Root profile not found, adding default root");
+            profiles.unshift({
+                name: "👑Hazrat Sultan Abulkhair Shah👑",
+                fatherName: "Sher Muhammad",
+                cnic: "ROOT001",
+                fatherCNIC: "ROOT1001",
+                bloodGroup: "O+",
+                phone: "123456789",
+                address: "Basti Sultan Abulkhair Shah",
+                dob: "1500-01-01",
+                gender: "male",
+                status: "deceased",
+                deathDate: "1563-01-01",
+                note: "یہ حضرت علیؓ کے بیٹے حضرت عباسؓ کے شجرہ سے ہیں",
+                photo: ""
+            });
+            saveProfiles();
+        }
+    } catch (e) {
+        console.error("Error updating root profile:", e);
+    }
+
+    // Tree Rendering with Photo
+   function renderTree() { 
+try {
+        console.log(`Rendering tree with ${profiles.length} profiles`);
+        const container = document.getElementById("treeContainer");
+        if (!container) {
+            console.error("Tree container not found");
+            alert("Tree container not found!");
+            return;
+        }
+        if (!profiles || profiles.length === 0) {
+            console.error("No profiles found for rendering");
+            container.innerHTML = "<p>No profiles available to display.</p>";
+            return;
+        }
+
+        const rootProfile = profiles.find(p => p.cnic === "ROOT001") || profiles[0];
+        if (!rootProfile) {
+            console.error("No valid root profile found");
+            container.innerHTML = "<p>Error: No valid root profile found.</p>";
+            return;
+        }
+
+        // Draw main tree
+        container.innerHTML = `
+            <div class="tree">
+                <ul>
+                    <li>
+                        <div class="node root-node" data-cnic="${rootProfile.cnic}">
+                            ${rootProfile.photo ? `<img src="${rootProfile.photo}" style="width:40px;height:40px;border-radius:50%;"><br>` : ""}
+                            ${rootProfile.name}
+                        </div>
+                        <ul id="children-${rootProfile.cnic}">${buildTree(rootProfile.cnic)}</ul>
+                    </li>
+                </ul>
+            </div>
+        `;
+
+        // Attach hover animation to all nodes
+        container.querySelectorAll(".node").forEach(node => {
+            node.addEventListener("mouseenter", () => {
+                const cnic = node.getAttribute("data-cnic");
+                highlightLineage(cnic);
+            });
+            node.addEventListener("mouseleave", () => {
+                clearHighlights();
+            });
+        });
+
+        updateVoteSummary();
+        console.log("Tree rendered successfully");
+    } catch (e) {
+        console.error("Error rendering tree:", e);
+        alert("Error rendering family tree: " + e.message);
+    }
+}
+
+// Highlight ancestors and descendants with animation
+function highlightLineage(cnic) {
+    clearHighlights();
+
+    const person = profiles.find(p => p.cnic === cnic);
+    if (!person) return;
+
+    // highlight this node
+    const node = document.querySelector(`.node[data-cnic="${cnic}"]`);
+    if (node) node.classList.add("highlight-line");
+
+    // highlight ancestors (scrolling upwards)
+    let parent = profiles.find(p => p.cnic === person.fatherCnic);
+    while (parent) {
+        const pNode = document.querySelector(`.node[data-cnic="${parent.cnic}"]`);
+        if (pNode) pNode.classList.add("highlight-line ancestor-line");
+        parent = profiles.find(p => p.cnic === parent.fatherCnic);
+    }
+
+    // highlight descendants (scrolling downwards)
+    function highlightChildren(fatherCnic) {
+        profiles.filter(p => p.fatherCnic === fatherCnic).forEach(child => {
+            const cNode = document.querySelector(`.node[data-cnic="${child.cnic}"]`);
+            if (cNode) cNode.classList.add("highlight-line descendant-line");
+            highlightChildren(child.cnic);
+        });
+    }
+    highlightChildren(cnic);
+}
+
+// Clear highlights
+function clearHighlights() {
+    document.querySelectorAll(".highlight-line").forEach(el => el.classList.remove("highlight-line", "ancestor-line", "descendant-line"));
+}
+
+
+    function buildTree(parentCnic, page = 1, pageSize = 10) {
+        try {
+            console.log("Building tree for parent CNIC:", parentCnic);
+            const parent = profiles.find(p => p.cnic === parentCnic);
+            if (parent && isFemaleProfile(parent)) return "";
+            const children = visibleProfiles().filter(p => p.fatherCNIC === parentCnic);
+            const start = (page - 1) * pageSize;
+            const paginatedChildren = children.slice(start, start + pageSize);
+            let html = "";
+            paginatedChildren.forEach(child => {
+                const photoHTML = `<img src="${getPhotoURL(child)}" class="profile-photo">`;
+                html += `
+                <li>
+                    <div class="node" data-cnic="${child.cnic}"${getNodeStyle(child.cnic)}>
+                        ${photoHTML}
+                        ${getCrownHTML(child.cnic)} ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(child.name, child) : child.name}
+                        <div class="profession">${child.profession ? child.profession : ""}</div>
+                        <div class="node-actions">
+                            ${isFemaleProfile(child) ? "" : `<button class="add-btn" onclick="openForm('${child.cnic}')">+</button>`}
+                            <button class="edit-btn" data-action="view" data-cnic="${child.cnic}">View</button>
+                            ${currentUser === "cpabk" ? `
+                                <button class="edit-btn" data-action="edit" data-cnic="${child.cnic}">Edit</button>
+                                <button class="delete-btn" data-action="delete" data-cnic="${child.cnic}">Delete</button>
+                            ` : ""}
+                            <button class="edit-btn" data-action="color" data-cnic="${child.cnic}">Color</button>
+                            <button class="edit-btn" data-action="crown" data-cnic="${child.cnic}">KING</button>
+                            ${ (child.gender==="female" && currentUser!=="cpabk") ? "" : `<button class="edit-btn" data-action="subtree" data-cnic="${child.cnic}">Tree</button>` }
+                        </div>
+                    </div>
+                    <ul id="children-${child.cnic}">${buildTree(child.cnic)}</ul>
+                </li>`;
+            });
+            if (children.length > start + pageSize) {
+                html += `<li><button class="load-more-btn" onclick="loadMoreChildren('${parentCnic}', ${page + 1}, ${pageSize})">مزید لوڈ کریں</button></li>`;
+            }
+            console.log("Tree built for CNIC:", parentCnic);
+            return html;
+        } catch (e) {
+            console.error("Error building tree:", e);
+            return "";
+        }
+    }
+
+    function loadMoreChildren(parentCnic, page, pageSize) {
+        try {
+            const container = document.getElementById(`children-${parentCnic}`);
+            if (container) {
+                container.innerHTML += buildTree(parentCnic, page, pageSize);
+            }
+        } catch (e) {
+            console.error("Error loading more children:", e);
+        }
+    }
+
+    // Event Delegation for Node Actions
+    document.addEventListener("click", function (e) {
+        try {
+            const action = e.target.dataset.action;
+            const cnic = e.target.dataset.cnic;
+            if (!action || !cnic) return;
+
+            if (action === "view") {
+                showProfile(cnic);
+            } else if (action === "edit" && currentUser === "cpabk") {
+                editProfile(cnic);
+            } else if (action === "delete" && currentUser === "cpabk") {
+                window.deleteProfile(cnic);
+            } else if (action === "subtree") {
+                showSubTree(cnic);
+            } else if (action === "color" && currentUser === "cpabk") {
+                setCustomColor(cnic);
+            } else if (action === "crown" && currentUser === "cpabk") {
+                toggleCrown(cnic);
+            }
+        } catch (e) {
+            console.error("Error in node action handler:", e);
+            alert("Error handling action: " + e.message);
+        }
+    });
+
+    // SubTree Modal
+    function showSubTree(cnic){
+        if (currentUser !== "cpabk") {
+            try{ const personCheck = profiles.find(p=>p.cnic===cnic); if (personCheck && String(personCheck.gender).toLowerCase()==="female") { alert("Only cpabk can view female trees."); return; } }catch(e){}
+        }
+        try {
+            const person = profiles.find(p => p.cnic === cnic);
+            if (!person) {
+                console.error("Profile not found for subtree:", cnic);
+                alert("Profile not found for subtree!");
+                return;
+            }
+            const subtreeHTML = `
+                <div class="tree">
+                    <ul>
+                        <li>
+                            <div class="node root-node" data-cnic="${person.cnic}">
+                                ${person.photo ? `<img src="${person.photo}" style="width:40px;height:40px;border-radius:50%;"><br>` : ""}
+                                ${person.name}
+                            </div>
+                            <ul id="children-${person.cnic}">${buildTree(person.cnic)}</ul>
+                        </li>
+                    </ul>
+                </div>
+            `;
+            const subTreeContent = document.getElementById("subTreeContent");
+            if (subTreeContent) {
+                subTreeContent.innerHTML = `
+                    <button class="close-btn" onclick="closeSubTreeModal()">×</button>
+                    ${subtreeHTML}
+                `;
+                document.getElementById("subTreeModal").style.display = "flex";
+            } else {
+                console.error("Subtree modal content element not found");
+                alert("Subtree modal content not found!");
+            }
+        } catch (e) {
+            console.error("Error showing subtree:", e);
+            alert("Error showing subtree: " + e.message);
+        }
+    }
+// --- Robust helpers ---
+function findPerson(cnic) {
+    const str = String(cnic);
+    return profiles.find(p => {
+        try {
+            return String(p.cnic) === str || String(p.CNIC) === str || String(p.id || "") === str;
+        } catch (e) { return false; }
+    });
+}
+
+// try to read father's cnic from many possible field names
+function getFatherCnic(person) {
+    if (!person) return null;
+    const keys = ['fatherCnic','fatherCNIC','father_cnic','father','parentCnic','parent','parent_cnic','f_cnic','fcnic','fatherId'];
+    for (const k of keys) {
+        if (person[k]) return String(person[k]);
+    }
+    // sometimes father stored inside nested object person.father?.cnic
+    try {
+        if (person.father && (person.father.cnic || person.father.CNIC || person.father.id)) {
+            return String(person.father.cnic || person.father.CNIC || person.father.id);
+        }
+    } catch (e) {}
+    return null;
+}
+
+// get ancestors: array [self, father, grandfather, ...]
+function getAncestors(cnic) {
+    const out = [];
+    const seen = new Set();
+    let current = findPerson(cnic);
+    while (current && !seen.has(String(current.cnic || current.id || current.CNIC))) {
+        out.push(current);
+        seen.add(String(current.cnic || current.id || current.CNIC));
+        const f = getFatherCnic(current);
+        if (!f) break;
+        current = findPerson(f);
+    }
+    return out;
+}
+
+// build ancestor HTML (top -> ... -> current)
+function buildAncestorView(cnic, levels) {
+    const anc = getAncestors(cnic); // [self, father, gfather...]
+    if (!anc.length) 
+        return `<div style="padding:10px; color:#b00020; font-weight:600; font-family:sans-serif;">
+                    ⚠️ No ancestor data for CNIC ${cnic}
+                </div>`;
+
+    // limit levels
+    let includeCount = anc.length;
+    if (typeof levels === 'number') {
+        includeCount = Math.min(anc.length, levels + 1); 
+    }
+    const slice = anc.slice(0, includeCount).reverse(); // top → self
+
+    // colors by generation
+    const colors = ["#007bff", "#28a745", "#fd7e14", "#6f42c1", "#20c997", "#e83e8c"];
+
+    let html = `<div class="ancestor-chain" 
+                    style="display:flex; flex-direction:column; align-items:center; gap:14px; 
+                           padding:12px; font-family:sans-serif;">`;
+
+    slice.forEach((person, idx) => {
+        const c = person.cnic || person.CNIC || person.id || '';
+        const color = colors[idx % colors.length]; // rotate colors if > list
+
+        html += `
+        <div class="ancestor-node" data-cnic="${c}" 
+             style="background:${color}15; border:2px solid ${color}; border-radius:10px; 
+                    padding:10px; min-width:180px; text-align:center; cursor:pointer; 
+                    box-shadow:0 3px 8px rgba(0,0,0,0.12); transition:transform 0.2s ease;">
+
+            ${person.photo 
+                ? `<img src="${person.photo}" 
+                        style="width:55px; height:55px; border-radius:50%; object-fit:cover; 
+                               margin:0 auto 8px; border:2px solid ${color};">`
+                : `<div style="width:55px; height:55px; border-radius:50%; background:${color}33; 
+                              margin:0 auto 8px; display:flex; align-items:center; 
+                              justify-content:center; font-size:20px; color:${color};">👤</div>`}
+
+            <div style="font-weight:600; font-size:14px; color:${color};">
+                ${person.name || person.fullName || 'Unknown'}
+            </div>
+            <div style="font-size:12px; color:#444; margin-top:2px;">${c}</div>
+        </div>
+
+        ${idx < slice.length - 1 
+            ? `<div style="width:3px; height:26px; background:${color}; border-radius:2px;"></div>` 
+            : ""}
+        `;
+    });
+
+    html += `</div>`;
+    return html;
+}
+
+
+// --- Node action menu (same as before but improved positioning) ---
+function nodeActionMenuHTML(targetCnic) {
+    return `
+    <div class="node-action-menu" id="nodeActionMenu-${targetCnic}" 
+         style="position:absolute; z-index:9999; background:#fff; border:1px solid #ddd; 
+                padding:10px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.15); 
+                min-width:220px; font-family:sans-serif;">
+
+        <div style="margin-bottom:10px; font-weight:600; font-size:15px; color:#333;">⚡ Actions</div>
+
+        <button onclick="showNodeChildren('${targetCnic}')" 
+            style="display:block; width:100%; margin-bottom:8px; padding:8px; 
+                   background:#007bff; color:#fff; border:none; border-radius:6px; 
+                   cursor:pointer; font-size:14px;">
+            👨‍👩‍👧 View Children (Subtree)
+        </button>
+
+        <button onclick="showNodeFather('${targetCnic}')" 
+            style="display:block; width:100%; margin-bottom:8px; padding:8px; 
+                   background:#28a745; color:#fff; border:none; border-radius:6px; 
+                   cursor:pointer; font-size:14px;">
+            ⬆️ Go Up — Open Father (and his children)
+        </button>
+
+        <button onclick="showNodeAncestors('${targetCnic}')" 
+            style="display:block; width:100%; margin-bottom:8px; padding:8px; 
+                   background:#6f42c1; color:#fff; border:none; border-radius:6px; 
+                   cursor:pointer; font-size:14px;">
+            🌳 View Branch (to root)
+        </button>
+
+        <div style="text-align:right; margin-top:10px;">
+            <button onclick="closeNodeActionMenu('${targetCnic}')" 
+                style="background:#dc3545; color:#fff; border:none; padding:6px 12px; 
+                       border-radius:6px; cursor:pointer; font-size:13px;">
+                ✖ Close
+            </button>
+        </div>
+    </div>`;
+}
+
+
+function closeNodeActionMenu(cnic) {
+    const el = document.getElementById(`nodeActionMenu-${cnic}`);
+    if (el) el.remove();
+}
+function closeNodeActionMenuAllBut(exceptCnic){
+    document.querySelectorAll('.node-action-menu').forEach(el=>{
+        if(!exceptCnic || !el.id.endsWith(`-${exceptCnic}`)) el.remove();
+    });
+}
+
+document.addEventListener('click', function(e){
+    if (!e.target.closest('.node-action-menu') && !e.target.closest('.clickable-node')) {
+        document.querySelectorAll('.node-action-menu').forEach(el => el.remove());
+    }
+}, true);
+
+// --- action handlers ---
+function showNodeChildren(cnic){
+    closeNodeActionMenu(cnic);
+    showSubTree(cnic, { mode:'children' });
+}
+function showNodeFather(cnic){
+    closeNodeActionMenu(cnic);
+    // find father CNIC and open father's children-subtree
+    const person = findPerson(cnic);
+    const fatherCnic = getFatherCnic(person);
+    if (!fatherCnic) {
+        alert('Father not found for this person.');
+        return;
+    }
+    // open father's subtree (children view)
+    showSubTree(fatherCnic, { mode: 'children' });
+}
+function showNodeAncestors(cnic){
+    closeNodeActionMenu(cnic);
+    showSubTree(cnic, { mode:'ancestors', levels: undefined });
+}
+
+// --- Main improved showSubTree ---
+function showSubTree(cnic, options = { mode: 'children' }) {
+    // restriction for female
+    if (currentUser !== "cpabk") {
+        try {
+            const personCheck = findPerson(cnic);
+            const gender = personCheck && (personCheck.gender || personCheck.Gender || personCheck.sex);
+            if (personCheck && String(gender || '').toLowerCase() === "female") {
+                alert("Only cpabk can view female trees.");
+                return;
+            }
+        } catch (e) { console.warn('gender check failed', e); }
+    }
+
+    try {
+        const person = findPerson(cnic);
+        if (!person) {
+            console.error("Profile not found for subtree:", cnic);
+            alert("Profile not found for subtree!");
+            return;
+        }
+
+        let contentHTML = "";
+
+        if (options.mode === 'ancestors') {
+            contentHTML = buildAncestorView(cnic, options.levels);
+        } else {
+            // children/subtree view — use buildTree if exists
+            const treeHtml = (typeof buildTree === 'function') ? buildTree(person.cnic || person.CNIC || person.id) : `<li>No buildTree() available for ${person.cnic}</li>`;
+            contentHTML = `
+                <div class="tree">
+                    <ul style="list-style:none; padding-left:0;">
+                        <li>
+                            <div class="node root-node" data-cnic="${person.cnic || person.CNIC || person.id}" style="display:inline-block; padding:8px; border-radius:6px; border:1px solid #ddd; text-align:center;">
+                                ${person.photo ? `<img src="${person.photo}" style="width:40px;height:40px;border-radius:50%;display:block;margin:0 auto 6px;">` : ""}
+                                <div style="font-weight:700;">${person.name || person.fullName || 'Unknown'}</div>
+                                <div style="font-size:12px; opacity:0.7;">${person.cnic || ''}</div>
+                            </div>
+                            <ul id="children-${person.cnic || person.CNIC || person.id}">
+                                ${treeHtml}
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+            `;
+        }
+
+        const subTreeContent = document.getElementById("subTreeContent");
+        if (!subTreeContent) {
+            console.error("Subtree modal content element not found");
+            alert("Subtree modal content not found!");
+            return;
+        }
+
+        subTreeContent.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <strong>${person.name || person.fullName || 'Unknown'}</strong>
+                    <div style="font-size:12px; opacity:0.8;">CNIC: ${person.cnic || person.CNIC || person.id || ''}</div>
+                </div>
+                <div>
+  <button onclick="closeSubTreeModal()" 
+    style="background:#ff4d4d;color:#fff;border:none;
+           padding:8px 14px;border-radius:6px;
+           font-size:14px;cursor:pointer;
+           box-shadow:0 2px 10px rgba(0,0,0,0.2);">
+    ✖ Close
+  </button>
+</div>
+
+            </div>
+            <hr>
+            ${contentHTML}
+            <div style="margin-top:10px; font-size:13px; color:#444;">
+                Tip: Click any person box to open actions (View Children / Father / grandfather).
+            </div>
+        `;
+        const modal = document.getElementById("subTreeModal");
+        if (modal) modal.style.display = "flex";
+
+        // attach click handlers to nodes (searching by data-cnic or data-cnic-like attributes)
+        setTimeout(()=> {
+            // select elements that look like nodes: class 'node' OR have attribute data-cnic (common)
+            const nodeEls = subTreeContent.querySelectorAll('.node, [data-cnic], [data-CNIC]');
+            nodeEls.forEach(n => {
+                // ensure it has a data-cnic attribute; if not, try to read inner text cnic or attribute name variants
+                if (!n.dataset.cnic) {
+                    const attr = n.getAttribute('data-CNIC') || n.getAttribute('data-cnic') || n.getAttribute('data-id') || n.getAttribute('data-idno');
+                    if (attr) n.dataset.cnic = attr;
+                }
+                n.classList.add('clickable-node');
+                // remove old onclick to avoid duplicates
+                n.onclick = function(ev){
+                    ev.stopPropagation();
+                    const targetCnic = this.dataset.cnic || this.getAttribute('data-cnic') || this.getAttribute('data-CNIC') || this.getAttribute('data-id') || this.getAttribute('data-idno');
+                    if (!targetCnic) {
+                        console.warn('clicked node without cnic', this);
+                        return;
+                    }
+                    // toggle menu
+                    closeNodeActionMenuAllBut(targetCnic);
+                    const existing = document.getElementById(`nodeActionMenu-${targetCnic}`);
+                    if (existing) { existing.remove(); return; }
+                    const menuHtml = nodeActionMenuHTML(targetCnic);
+                    document.body.insertAdjacentHTML('beforeend', menuHtml);
+                    const menuEl = document.getElementById(`nodeActionMenu-${targetCnic}`);
+                    if (menuEl) {
+                        const rect = this.getBoundingClientRect();
+                        // try to keep menu inside viewport
+                        const left = Math.min(window.innerWidth - 230, rect.right + 8);
+                        const top = Math.max(8, rect.top + window.scrollY - 4);
+                        menuEl.style.left = left + 'px';
+                        menuEl.style.top = top + 'px';
+                    }
+                };
+            });
+        }, 25);
+
+    } catch (err) {
+        console.error("Error in showSubTree:", err);
+        alert("Error showing subtree: " + (err && err.message ? err.message : err));
+    }
+}
+
+function closeSubTreeModal(){
+    const modal = document.getElementById("subTreeModal");
+    if (modal) modal.style.display = "none";
+    const content = document.getElementById("subTreeContent");
+    if (content) content.innerHTML = "";
+    document.querySelectorAll('.node-action-menu').forEach(el=>el.remove());
+}
+
+    function closeSubTreeModal() {
+        try {
+            const modal = document.getElementById("subTreeModal");
+            if (modal) modal.style.display = "none";
+        } catch (e) {
+            console.error("Error closing subtree modal:", e);
+        }
+    }
+
+  
+
+    // Generate and Store Random Code
+    function getStoredRandomCode() {
+        try {
+            let randomCode = localStorage.getItem("randomCode");
+            if (!randomCode) {
+                randomCode = Math.floor(100000 + Math.random() * 900000);
+                localStorage.setItem("randomCode", randomCode);
+            }
+            return parseInt(randomCode);
+        } catch (e) {
+            console.error("Error generating random code:", e);
+            return 0;
+        }
+    }
+
+    // Parse d/m/y Date to JavaScript Date
+    function parseDMYDate(dateStr) {
+        try {
+            if (!dateStr || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) return null;
+            const [day, month, year] = dateStr.split("/").map(Number);
+            return new Date(year, month - 1, day);
+        } catch (e) {
+            console.error("Error parsing date:", e);
+            return null;
+        }
+    }
+
+    // Format Date as d/m/y with Full Year
+    function formatDMYDate(date) {
+        try {
+            const day = date.getDate();
+            const month = date.getMonth() + 1;
+            const year = date.getFullYear();
+            return `${day}/${month}/${year}`;
+        } catch (e) {
+            console.error("Error formatting date:", e);
+            return "";
+        }
+    }
+
+    // Get Month Range
+    function getMonthRange(date) {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        return {
+            start: formatDMYDate(firstDay),
+            end: formatDMYDate(lastDay)
+        };
+    }
+
+    // Populate Month Selector
+    function populateMonthSelector() {
+        try {
+            const selector = document.getElementById("monthSelector");
+            if (!selector) return;
+
+            const months = [];
+            const today = new Date();
+            const earliestYear = 2025;
+            for (let year = earliestYear; year <= today.getFullYear(); year++) {
+                for (let month = 0; month < 12; month++) {
+                    const key = getFundsKey("fundsReceived", new Date(year, month, 1));
+                    if (localStorage.getItem(key)) {
+                        months.push({ year, month });
+                    }
+                }
+            }
+            const currentKey = getFundsKey("fundsReceived", today);
+            if (!months.some(m => getFundsKey("fundsReceived", new Date(m.year, m.month, 1)) === currentKey)) {
+                months.push({ year: today.getFullYear(), month: today.getMonth() });
+            }
+
+            months.sort((a, b) => new Date(b.year, b.month) - new Date(a.year, a.month));
+
+            selector.innerHTML = months.map(m => {
+                const date = new Date(m.year, m.month, 1);
+                const monthName = date.toLocaleString('default', { month: 'long' });
+                return `<option value="${m.year}-${m.month}">${monthName} ${m.year}</option>`;
+            }).join("");
+        } catch (e) {
+            console.error("Error populating month selector:", e);
+        }
+    }
+
+    // Check Plan Status
+    function checkPlanStatus() {
+        try {
+            const forceLockForTesting = false;
+            if (forceLockForTesting) {
+                showLockModal();
+                return;
+            }
+
+            const lastUnlockDate = localStorage.getItem("lastUnlockDate");
+            const today = new Date();
+
+            if (!lastUnlockDate) {
+                localStorage.setItem("lastUnlockDate", formatDMYDate(today));
+                localStorage.setItem("randomCode", Math.floor(100000 + Math.random() * 900000));
+                return;
+            }
+
+            const lastDate = parseDMYDate(lastUnlockDate);
+            if (!lastDate) {
+                localStorage.setItem("lastUnlockDate", formatDMYDate(today));
+                localStorage.setItem("randomCode", Math.floor(100000 + Math.random() * 900000));
+                return;
+            }
+
+            const diffDays = Math.floor((today - lastDate) / (1000 * 60 * 60 * 24));
+
+            if (diffDays >= 30) {
+                showLockModal();
+            }
+        } catch (e) {
+            console.error("Error checking plan status:", e);
+            alert("Error checking plan status: " + e.message);
+        }
+    }
+
+    // Show Lock Modal
+    function showLockModal() {
+        try {
+            const randomCode = getStoredRandomCode();
+            const correctCode = randomCode * 2 + 985973;
+
+            const lockModal = document.createElement("div");
+            lockModal.id = "lockModal";
+            lockModal.style.cssText = `
+                position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);
+                display:flex;justify-content:center;align-items:center;z-index:9999;font-family:Arial;
+            `;
+
+            lockModal.innerHTML = `
+                <div style="background:#fff;padding:20px;border-radius:10px;width:90%;max-width:360px;text-align:center;">
+                    <h3 style="color:#d62828;margin-bottom:10px;">⚠ پلان ختم ہوگیا</h3>
+                    <p style="color:#333;">ان لاک کرنے کے لیے دیے گئے وٹس آیپ پہ رابطہ کریں۔ To unlock, contact the given WhatsApp number. Send the provided code to the number mentioned below.:</p>
+                    <p style="font-size:22px;font-weight:bold;color:#0a9396;margin:15px 0;">${randomCode}</p>
+                    <input type="text" id="unlockInput" placeholder="Enter Unlock Code" 
+                        style="width:100%;padding:10px;margin-top:10px;border:1px solid #ccc;border-radius:6px;font-size:16px;">
+                    <button id="unlockBtn" 
+                        style="margin-top:15px;padding:10px 18px;background:#0a9396;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:16px;">
+                        Unlock
+                    </button>
+                    <p style="margin-top:12px;font-size:14px;">Contact for Unlock: 
+                        <a href="https://wa.me/923117323373" target="_blank" style="color:#d62828;text-decoration:none;font-weight:bold;">
+                            WhatsApp 03117323373
+                        </a>
+                    </p>
+                </div>
+            `;
+
+            document.body.appendChild(lockModal);
+
+            document.getElementById("unlockBtn").addEventListener("click", function () {
+                try {
+                    const userCode = document.getElementById("unlockInput").value.trim();
+
+                    if (parseInt(userCode) === correctCode || currentUser === "cpabk") {
+                        localStorage.setItem("lastUnlockDate", formatDMYDate(new Date()));
+                        localStorage.removeItem("randomCode");
+                        document.body.removeChild(lockModal);
+                        alert("✅ App Unlocked Successfully!");
+                        location.reload();
+                    } else {
+                        alert("❌ غلط Code! دوبارہ کوشش کریں۔");
+                    }
+                } catch (e) {
+                    console.error("Error in unlock button handler:", e);
+                    alert("Error unlocking app: " + e.message);
+                }
+            });
+        } catch (e) {
+            console.error("Error showing lock modal:", e);
+            alert("Error showing lock modal: " + e.message);
+        }
+    }
+
+ // Delete Profile
+    function deleteProfile(cnic) {
+    try {
+
+        showConfirm(function() {
+
+            function removeBranch(id) {
+                const children = profiles.filter(p => p.fatherCNIC === id);
+                children.forEach(child => removeBranch(child.cnic));
+                profiles = profiles.filter(p => p.cnic !== id);
+            }
+
+            removeBranch(cnic);
+
+            saveProfiles();
+            renderTree();
+
+            showNotify(
+                "کامیابی ✓",
+                "پروفائل اور اس کی تمام اولاد کامیابی سے حذف کر دی گئی۔",
+                "success"
+            );
+
+        });
+
+    } catch (e) {
+        console.error("Error deleting profile:", e);
+        showNotify(
+            "خرابی ❌",
+            "پروفائل حذف کرنے میں مسئلہ پیش آیا۔"
+        );
+    }
+}
+
+    // Funds Rendering
+    function renderFunds() {
+        try {
+            const today = new Date();
+            const lastUpdate = localStorage.getItem("lastFundUpdate");
+
+            // Update currentMonth based on selector
+            const selector = document.getElementById("monthSelector");
+            if (selector && selector.value) {
+                const [year, month] = selector.value.split("-").map(Number);
+                currentMonth = new Date(year, month, 1);
+            } else {
+                currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            }
+
+            // Load funds and balance for the selected month
+            fundsReceived = JSON.parse(localStorage.getItem(getFundsKey("fundsReceived", currentMonth))) || [];
+            fundsUsed = JSON.parse(localStorage.getItem(getFundsKey("fundsUsed", currentMonth))) || [];
+            currentBalance = parseFloat(localStorage.getItem(getBalanceKey(currentMonth))) || 0;
+
+            // Check if we need to transfer balance from previous month
+            if (lastUpdate && currentMonth.getTime() === new Date(today.getFullYear(), today.getMonth(), 1).getTime()) {
+                const lastDate = new Date(lastUpdate);
+                if (today.getMonth() !== lastDate.getMonth() || today.getFullYear() !== lastDate.getFullYear()) {
+                    const prevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                    const prevBalance = parseFloat(localStorage.getItem(getBalanceKey(prevMonth))) || 0;
+                    const prevFundsReceived = JSON.parse(localStorage.getItem(getFundsKey("fundsReceived", prevMonth))) || [];
+                    const prevFundsUsed = JSON.parse(localStorage.getItem(getFundsKey("fundsUsed", prevMonth))) || [];
+                    const lastMonthBalance = prevBalance + calculateCurrentBalance(prevFundsReceived, prevFundsUsed);
+                    currentBalance = lastMonthBalance > 0 ? lastMonthBalance : 0;
+                    fundsReceived = [];
+                    fundsUsed = [];
+                    saveFunds();
+                }
+            }
+            localStorage.setItem("lastFundUpdate", today.toISOString());
+
+            // Update date range header
+            const dateRangeHeader = document.getElementById("dateRangeHeader");
+            if (dateRangeHeader) {
+                const range = getMonthRange(currentMonth);
+                dateRangeHeader.textContent = `Report Period: ${range.start} to ${range.end}`;
+            }
+
+            // Render funds received table
+            const receiveBody = document.getElementById("fundReceiveBody");
+            if (receiveBody) {
+                receiveBody.innerHTML = "";
+                fundsReceived.forEach(fund => {
+                    const row = document.createElement("tr");
+                    row.style.cssText = "border: 1px solid #ccc;";
+                    row.innerHTML = `
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.name}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.amount}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.accountNumber || '-'}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.method || '-'}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.date}</td>
+                    `;
+                    receiveBody.appendChild(row);
+                });
+            }
+
+            // Render funds used table
+            const useBody = document.getElementById("fundUseBody");
+            if (useBody) {
+                useBody.innerHTML = "";
+                fundsUsed.forEach(fund => {
+                    const row = document.createElement("tr");
+                    row.style.cssText = "border: 1px solid #ccc;";
+                    row.innerHTML = `
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.purpose}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.amount}</td>
+                        <td style="padding: 8px; border: 1px solid #ccc;">${fund.date}</td>
+                    `;
+                    useBody.appendChild(row);
+                });
+            }
+
+            updateFundTotals();
+            populateMonthSelector();
+        } catch (e) {
+            console.error("Error rendering funds:", e);
+            alert("Error rendering funds: " + e.message);
+        }
+    }
+
+    // Update Fund Totals
+    function updateFundTotals() {
+        try {
+            const totalReceived = fundsReceived.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+            const totalUsed = fundsUsed.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+
+            document.getElementById("totalReceived").textContent = totalReceived.toFixed(2);
+            document.getElementById("totalUsed").textContent = totalUsed.toFixed(2);
+            document.getElementById("currentBalance").textContent = (currentBalance + totalReceived - totalUsed).toFixed(2);
+        } catch (e) {
+            console.error("Error updating fund totals:", e);
+        }
+    }
+
+    // Calculate Current Balance for a specific month
+    function calculateCurrentBalance(received = fundsReceived, used = fundsUsed) {
+        try {
+            const totalReceived = received.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+            const totalUsed = used.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+            return totalReceived - totalUsed;
+        } catch (e) {
+            console.error("Error calculating current balance:", e);
+            return 0;
+        }
+    }
+
+    // Handle Fund Receive Form
+    document.getElementById("fundReceiveForm")?.addEventListener("submit", function (e) {
+        try {
+            e.preventDefault();
+            const name = document.getElementById("fundName").value.trim();
+            const amount = parseFloat(document.getElementById("fundAmount").value);
+            const accountNumber = document.getElementById("accountNumber").value.trim();
+            const method = document.getElementById("paymentMethod").value;
+            const date = formatDMYDate(new Date());
+
+            if (!name || !amount || !accountNumber || !method) {
+                alert("Please fill all required fields!");
+                return;
+            }
+
+            fundsReceived.push({ name, amount, accountNumber, method, date });
+            saveFunds();
+            renderFunds();
+            this.reset();
+        } catch (e) {
+            console.error("Error submitting fund receive form:", e);
+            alert("Error saving fund: " + e.message);
+        }
+    });
+
+    // Handle Fund Use Form
+    document.getElementById("fundUseForm")?.addEventListener("submit", function (e) {
+        try {
+            e.preventDefault();
+            const purpose = document.getElementById("fundPurpose").value.trim();
+            const amount = parseFloat(document.getElementById("fundUsed").value);
+            const date = formatDMYDate(new Date());
+
+            if (!purpose || !amount) {
+                alert("Please fill all required fields!");
+                return;
+            }
+
+            const availableBalance = currentBalance + calculateCurrentBalance();
+            if (amount > availableBalance) {
+                alert("Insufficient funds!");
+                return;
+            }
+
+            fundsUsed.push({ purpose, amount, date });
+            saveFunds();
+            renderFunds();
+            this.reset();
+        } catch (e) {
+            console.error("Error submitting fund use form:", e);
+            alert("Error using fund: " + e.message);
+        }
+    });
+    // Export Fund Receive Table to PDF
+    function exportFundReceivePDF() {
+        try {
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+                throw new Error("jsPDF library not loaded");
+            }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.setFont("helvetica", "normal");
+
+            doc.setFontSize(16);
+            doc.text("Received Funds Report", 14, 20);
+            doc.setFontSize(12);
+            const range = getMonthRange(currentMonth);
+            doc.text(`Period: ${range.start} to ${range.end}`, 14, 30);
+
+            const headers = ["Name", "Fund Amount", "Account Number", "Payment Method", "Date"];
+            const data = fundsReceived.map(fund => [
+                fund.name,
+                fund.amount.toString(),
+                fund.accountNumber || '-',
+                fund.method || '-',
+                fund.date
+            ]);
+
+            if (typeof doc.autoTable === "function") {
+                doc.autoTable({
+                    startY: 40,
+                    head: [headers],
+                    body: data,
+                    theme: 'grid',
+                    headStyles: { fillColor: [0, 95, 115], textColor: [255, 255, 255] },
+                    styles: { textColor: [51, 51, 51], lineColor: [204, 204, 204], lineWidth: 0.1 },
+                });
+
+                const totalReceived = fundsReceived.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+                doc.text(`Total Received: ${totalReceived.toFixed(2)}`, 14, doc.lastAutoTable.finalY + 10);
+            } else {
+                throw new Error("autoTable plugin not loaded");
+            }
+
+            doc.save(`Fund_Receive_Report_${currentMonth.getFullYear()}-${(currentMonth.getMonth() + 1).toString().padStart(2, '0')}.pdf`);
+        } catch (e) {
+            console.error("Error exporting fund receive PDF:", e);
+            alert("Error exporting PDF: " + e.message);
+        }
+    }
+
+    // Export Fund Use Table to PDF
+    function exportFundUsePDF() {
+        try {
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+                throw new Error("jsPDF library not loaded");
+            }
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.setFont("helvetica", "normal");
+
+            doc.setFontSize(16);
+            doc.text("Used Funds Report", 14, 20);
+            doc.setFontSize(12);
+            const range = getMonthRange(currentMonth);
+            doc.text(`Period: ${range.start} to ${range.end}`, 14, 30);
+
+            const headers = ["Purpose", "Amount", "Date"];
+            const data = fundsUsed.map(fund => [
+                fund.purpose,
+                fund.amount.toString(),
+                fund.date
+            ]);
+
+            if (typeof doc.autoTable === "function") {
+                doc.autoTable({
+                    startY: 40,
+                    head: [headers],
+                    body: data,
+                    theme: 'grid',
+                    headStyles: { fillColor: [255, 140, 102], textColor: [255, 255, 255] },
+                    styles: { textColor: [51, 51, 51], lineColor: [204, 204, 204], lineWidth: 0.1 },
+                });
+
+                const totalUsed = fundsUsed.reduce((sum, fund) => sum + parseFloat(fund.amount), 0);
+                doc.text(`Total Used: ${totalUsed.toFixed(2)}`, 14, doc.lastAutoTable.finalY + 10);
+                doc.text(`Current Balance: ${(currentBalance + calculateCurrentBalance()).toFixed(2)}`, 14, doc.lastAutoTable.finalY + 20);
+            } else {
+                throw new Error("autoTable plugin not loaded");
+            }
+
+            doc.save(`Fund_Use_Report_${currentMonth.getFullYear()}-${(currentMonth.getMonth() + 1).toString().padStart(2, '0')}.pdf`);
+        } catch (e) {
+            console.error("Error exporting fund use PDF:", e);
+            alert("Error exporting PDF: " + e.message);
+        }
+    }
+
+    // Export as CSV
+    function exportBackup() {
+        try {
+            if (!profiles || profiles.length === 0) {
+                alert("No data to export!");
+                return;
+            }
+
+            const headers = [
+                "name", "fatherName", "cnic", "fatherCNIC", "bloodGroup", "phone",
+                "address", "dob", "gender", "married", "spouseCnic", "spouseName", "status", "deathDate", "photo", "note", "profession", "shajraLine"
+            ];
+
+            // Create CSV with BOM for UTF-8 to support Urdu characters
+            let csv = "\uFEFF" + headers.join(",") + "\n";
+
+            profiles.forEach(profile => {
+                const row = headers.map(h => {
+                    const value = profile[h] || "";
+                    // Properly escape quotes and handle commas in values
+                    return `"${value.replace(/"/g, '""').replace(/\n/g, ' ')}"`;
+                }).join(",");
+                csv += row + "\n";
+            });
+
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement("a");
+            link.href = url;
+            link.setAttribute("download", "ABK_Family_Backup.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            alert("Data exported successfully!");
+        } catch (e) {
+            console.error("Error exporting backup:", e);
+            alert("Error exporting backup: " + e.message);
+        }
+    }
+
+    // Import from CSV
+
+    async function importBackup(event) {
+        try {
+            const fileInput = document.getElementById("importBackup");
+            if (!fileInput) {
+                console.error("Import file input not found in DOM");
+                alert("Import file input not found! Please ensure the input element with id='importBackup' exists.");
+                return;
+            }
+
+            const file = event.target.files[0];
+            if (!file) {
+                alert("No file selected! Please choose a CSV file.");
+                return;
+            }
+
+            if (!file.name.endsWith(".csv")) {
+                alert("Invalid file type! Please select a CSV file.");
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function (e) {
+                try {
+                    const text = e.target.result;
+                    const lines = text.split("\n").map(line => line.trim()).filter(line => line);
+                    if (lines.length < 1) {
+                        alert("CSV file is empty!");
+                        return;
+                    }
+
+                    // Remove BOM if present
+                    const cleanText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+                    const cleanLines = cleanText.split("\n").map(line => line.trim()).filter(line => line);
+
+                    const headers = cleanLines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.replace(/"/g, "").trim());
+                    const expectedHeaders = [
+                        "name", "fatherName", "cnic", "fatherCNIC", "bloodGroup", "phone",
+                        "address", "dob", "gender", "married", "spouseCnic", "spouseName", "status", "deathDate", "photo", "note", "profession", "shajraLine"
+                    ];
+
+                    // Validate headers
+                    if (!headers.every((h, i) => h === expectedHeaders[i])) {
+                        alert("Invalid CSV format! Expected headers: " + expectedHeaders.join(", "));
+                        return;
+                    }
+
+                    const importedProfiles = [];
+                    const duplicateProfiles = [];
+                    const chunkSize = 100;
+
+                    for (let i = 1; i < cleanLines.length; i += chunkSize) {
+                        const chunk = cleanLines.slice(i, i + chunkSize);
+                        for (const line of chunk) {
+                            const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, "").trim());
+                            if (values.length !== headers.length) {
+                                console.warn("Skipping malformed row:", line);
+                                continue;
+                            }
+
+                            let obj = {};
+                            headers.forEach((header, index) => {
+                                obj[header] = values[index] || "";
+                            });
+
+                            // Validate required fields
+                            if (!obj.cnic || !obj.name) {
+                                console.warn("Skipping row with missing CNIC or name:", obj);
+                                continue;
+                            }
+
+                            // Validate bloodGroup
+                            const validBloodGroups = ["o+", "o-", "a+", "a-", "b+", "b-", "ab+", "ab-"];
+                            if (obj.bloodGroup && !validBloodGroups.includes(obj.bloodGroup.toLowerCase())) {
+                                obj.bloodGroup = "";
+                            }
+
+                            // Validate status
+                            if (!["alive", "deceased"].includes(obj.status)) {
+                                obj.status = "alive";
+                            }
+
+                            // Clear deathDate if status is alive
+                            if (obj.status === "alive") {
+                                obj.deathDate = "";
+                            }
+
+                            if (profiles.some(p => p.cnic === obj.cnic)) {
+                                duplicateProfiles.push(obj);
+                            } else {
+                                importedProfiles.push(obj);
+                            }
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+
+                    if (duplicateProfiles.length > 0) {
+                        showDuplicateAlert(`${duplicateProfiles.length} ڈوپلیکیٹ CNIC ملے: ${duplicateProfiles.map(p => p.cnic).join(", ")}`);
+                    }
+
+                    if (importedProfiles.length > 0) {
+                        profiles = [...profiles, ...importedProfiles];
+                        saveProfiles();
+                        renderTree();
+                        alert(`${importedProfiles.length} نئے پروفائلز امپورٹ ہوئے!`);
+                    } else {
+                        alert("کوئی نئے پروفائلز امپورٹ نہیں ہوئے!");
+                    }
+
+                    // Reset the file input
+                    fileInput.value = "";
+                } catch (e) {
+                    console.error("Error processing CSV:", e);
+                    alert("Error processing CSV: " + e.message);
+                }
+            };
+
+            reader.onerror = function () {
+                console.error("Error reading file");
+                alert("Error reading CSV file! Please ensure the file is accessible.");
+            };
+            reader.readAsText(file);
+        } catch (e) {
+            console.error("Error importing backup:", e);
+            alert("Error importing backup: " + e.message);
+        }
+    }
+
+   // DOM Content Loaded
+    document.addEventListener("DOMContentLoaded", function () {
+        try {
+            checkPlanStatus();
+            startProfileCustomizationRealtimeWhenReady();
+            const loginBox = document.getElementById("loginBox");
+            const app = document.getElementById("app");
+
+            // Bind importBackup to file input
+            const importInput = document.getElementById("importBackup");
+            if (importInput) {
+                importInput.addEventListener("change", importBackup);
+            } else {
+                console.warn("Import input element not found in DOM");
+            }
+
+            if (window.location.pathname.includes("funds.html")) {
+                if (!currentUser) {
+                    window.location.href = "index.html";
+                    return;
+                }
+                if (app) {
+                    app.style.display = "block";
+                    renderFunds();
+                }
+            } else {
+                if (currentUser) {
+                    if (loginBox) loginBox.style.display = "none";
+                    if (app) {
+                        app.style.display = "block";
+                        renderTree();
+                    }
+                } else {
+                    if (loginBox) loginBox.style.display = "block";
+                    if (app) app.style.display = "none";
+                }
+            }
+            console.log("App initialized successfully with currentUser:", currentUser);
+        } catch (e) {
+            console.error("Error during DOMContentLoaded:", e);
+            alert("Error initializing app: " + e.message);
+        }
+    });
+
+    // Debounce Function
+    function debounce(func, wait) {
+        let timeout;
+        return function (...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+    }
+} catch (e) {
+    console.error("Critical error in script initialization:", e);
+    alert("Critical error loading app: " + e.message);
+}
+
+
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA0qwngMbPDTuXMdLPpOeiQd2pudhQIYoY",
+  authDomain: "abk-tree-online.firebaseapp.com",
+  projectId: "abk-tree-online",
+  storageBucket: "abk-tree-online.firebasestorage.app",
+  messagingSenderId: "10482183845",
+  appId: "1:10482183845:web:e3482ffcd943517adba74c",
+  measurementId: "G-Z9890D580Q"
+};
+
+const app = firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+
+
+
+
+function showNotify(title, message, type = "error") {
+    const overlay = document.getElementById("notifyOverlay");
+    const box = overlay.querySelector(".notify-box");
+    const titleEl = document.getElementById("notifyTitle");
+    const messageEl = document.getElementById("notifyMessage");
+
+    titleEl.innerText = title;
+    messageEl.innerText = message;
+
+    if (type === "success") {
+        titleEl.style.color = "#27ae60";
+    } else {
+        titleEl.style.color = "#c0392b";
+    }
+
+    overlay.style.display = "flex";
+}
+
+function closeNotify() {
+    document.getElementById("notifyOverlay").style.display = "none";
+}
+
+let deleteCallback = null;
+
+function showConfirm(callback) {
+    deleteCallback = callback;
+    document.getElementById("confirmOverlay").style.display = "flex";
+}
+
+function confirmDeleteAction() {
+    if (deleteCallback) {
+        deleteCallback();
+    }
+    closeConfirm();
+}
+
+function closeConfirm() {
+    document.getElementById("confirmOverlay").style.display = "none";
+    deleteCallback = null;
+}
+
+function renderTree(startCNIC = "ROOT001") {
+    const root = profiles.find(p => p.cnic === startCNIC);
+    if (!root) return;
+
+    const container = document.getElementById("treeContainer");
+    container.innerHTML = "";
+
+    createTreeNode(root, container);
+}
+
+async function loadProfilesFromFirestore() {
+    const snapshot = await getDocs(collection(db, "profiles"));
+    profiles = snapshot.docs.map(doc => doc.data());
+    renderTree();
+    updateVoteSummary();
+}
+
+function listenToProfiles() {
+    onSnapshot(collection(db, "profiles"), (snapshot) => {
+        profiles = snapshot.docs.map(doc => doc.data());
+        renderTree();
+        updateVoteSummary();
+    });
+}
+
+// 🔥 AUTO CENTER ROOT NODE AFTER RENDER
+setTimeout(() => {
+    const container = document.getElementById("treeContainer");
+    const rootNode = container.querySelector(".root-node");
+
+    if (container && rootNode) {
+        const containerRect = container.getBoundingClientRect();
+        const rootRect = rootNode.getBoundingClientRect();
+
+        const offsetLeft = rootRect.left - containerRect.left;
+        const scrollTo = offsetLeft - (container.clientWidth / 2) + (rootRect.width / 2);
+
+        container.scrollLeft = scrollTo;
+    }
+}, 300);
+
+function listenProfilesRealtime() {
+    try {
+        const colRef = firebase.firestore().collection("profiles");
+
+        colRef.onSnapshot(async snapshot => {
+            profiles = [];
+
+            snapshot.forEach(doc => {
+                profiles.push(doc.data());
+            });
+
+            // 🔥 Root auto create
+            if (profiles.length === 0) {
+                await colRef.doc("ROOT001").set(defaultRootProfile);
+                return;
+            }
+
+            isDataLoaded = true;
+
+            console.log("🔥 Data Loaded:", profiles.length);
+
+            renderTree(); // ✅ ab safe hai
+
+        });
+
+    } catch (e) {
+        console.error("Realtime error:", e);
+    }
+}
+
+async function saveProfile(photoData) {
+    try {
+        const editCnic     = document.getElementById("editCnic")?.value.trim();
+        const name         = document.getElementById("name")?.value.trim();
+        const fatherName   = document.getElementById("fatherName")?.value.trim();
+        const cnic         = document.getElementById("cnic")?.value.trim();
+        const fatherCnic   = document.getElementById("fatherCnic")?.value.trim();
+        const bloodGroup   = document.getElementById("bloodGroup")?.value;
+        const phone        = document.getElementById("phone")?.value.trim();
+        const address      = document.getElementById("address")?.value.trim();
+        const profession   = document.getElementById("profession")?.value.trim();
+        const dob          = document.getElementById("dob")?.value;
+        const gender       = document.getElementById("gender")?.value;
+        const married      = document.querySelector('input[name="married"]:checked')?.value || "";
+        const spouseCnic   = document.getElementById("spouseCnic")?.value.trim();
+        const spouseName   = document.getElementById("spouseName")?.value.trim();
+        const shajraLine   = document.getElementById("addShajraLine")?.value.trim() || "";
+        const status       = document.querySelector('input[name="status"]:checked')?.value;
+        const deathDate    = document.getElementById("deathDate")?.value;
+
+        if (!name || !cnic || !status) {
+            showNotify("ضروری معلومات مکمل کریں ⚠️","نام، CNIC اور حیثیت لازمی ہیں۔");
+            return;
+        }
+
+        // Duplicate Check (same as yours)
+        if (!editCnic) {
+            const existing = profiles.find(p => p.cnic === cnic);
+            if (existing) {
+                showNotify("ڈپلیکیٹ CNIC ⚠️",`یہ CNIC "${cnic}" پہلے سے استعمال میں ہے۔`);
+                return;
+            }
+        } else {
+            if (editCnic !== cnic) {
+                const conflict = profiles.find(p => p.cnic === cnic);
+                if (conflict) {
+                    showNotify("CNIC Conflict ⚠️",`یہ نیا CNIC "${cnic}" پہلے سے موجود ہے۔`);
+                    return;
+                }
+            }
+        }
+
+        const profileData = { 
+            profession, name, fatherName, cnic, fatherCNIC: fatherCnic, 
+            bloodGroup, phone, address, dob, gender, married, spouseCnic, spouseName, 
+            status, deathDate, shajraLine, 
+            photo: photoData
+        };
+
+        // 🔥 LOCAL LOGIC SAME (NO CHANGE)
+        if (!editCnic) {
+            profiles.push(profileData);
+            showNotify("کامیابی ✓", "نیا پروفائل کامیابی سے شامل کر دیا گیا۔", "success");
+        } else {
+            const index = profiles.findIndex(p => p.cnic === editCnic);
+            if (index !== -1) {
+                if (!photoData && profileData.photo === "") {
+                    profileData.photo = profiles[index].photo;
+                }
+                profiles[index] = profileData;
+                showNotify("اپ ڈیٹ مکمل ✓", "پروفائل کامیابی سے اپ ڈیٹ ہو گیا۔", "success");
+            }
+        }
+
+        // 🔥🔥 FIRESTORE SYNC ADD (NEW PART)
+        try {
+            const db = firebase.firestore();
+            await db.collection("profiles").doc(cnic).set(profileData);
+            console.log("🔥 Firestore Sync Success:", cnic);
+        } catch (err) {
+            console.error("❌ Firestore Error:", err);
+            showNotify("Firestore Error ❌", "Cloud sync fail ho gaya");
+        }
+
+        // 🔥 SAME OLD SYSTEM
+        saveProfiles();
+        closeForm();
+        renderTree();
+
+    } catch (e) {
+        console.error("Error saving profile:", e);
+        showNotify("خرابی ❌", "پروفائل محفوظ کرنے میں مسئلہ پیش آیا۔");
+    }
+}
+
+async function deleteProfile(cnic) {
+    try {
+        await firebase.firestore().collection("profiles").doc(cnic).delete();
+
+        showNotify("Deleted ✅", "Profile delete ho gaya");
+
+    } catch (e) {
+        console.error("Delete error:", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Firestore realtime sync upgrade.
+// Profiles are now stored in Firestore and listened to in realtime, so a new
+// profile, edited tree, delete, or CSV import appears on every installed app.
+// ---------------------------------------------------------------------------
+(function setupFirestoreRealtimeUpgrade() {
+    const DEFAULT_ROOT_PROFILE = {
+        name: "Hazrat Sultan Abulkhair Shah",
+        fatherName: "Sher Muhammad",
+        cnic: "ROOT001",
+        fatherCNIC: "ROOT1001",
+        bloodGroup: "O+",
+        phone: "123456789",
+        address: "Basti Sultan Abulkhair Shah",
+        dob: "1500-01-01",
+        gender: "male",
+        status: "deceased",
+        deathDate: "1563-01-01",
+        note: "",
+        photo: ""
+    };
+
+    const FIREBASE_CONFIG = {
+        apiKey: "AIzaSyA0qwngMbPDTuXMdLPpOeiQd2pudhQIYoY",
+        authDomain: "abk-tree-online.firebaseapp.com",
+        projectId: "abk-tree-online",
+        storageBucket: "abk-tree-online.firebasestorage.app",
+        messagingSenderId: "10482183845",
+        appId: "1:10482183845:web:e3482ffcd943517adba74c",
+        measurementId: "G-Z9890D580Q"
+    };
+
+    let realtimeUnsubscribe = null;
+    let realtimeStarted = false;
+    let initialUploadDone = false;
+
+    function getFirestoreDb() {
+        if (typeof firebase === "undefined" || !firebase.firestore) {
+            console.warn("Firebase compat Firestore SDK is not loaded. Realtime sync is disabled.");
+            return null;
+        }
+        try {
+            if (!firebase.apps || firebase.apps.length === 0) {
+                firebase.initializeApp(FIREBASE_CONFIG);
+            }
+        } catch (err) {
+            if (!String(err && err.message || "").includes("already exists")) {
+                console.error("Firebase initialize error:", err);
+            }
+        }
+        try {
+            return firebase.firestore();
+        } catch (err) {
+            console.error("Firestore init error:", err);
+            return null;
+        }
+    }
+
+    function cleanRealtimeCnic(value) {
+        return String(value || "").replace(/v/ig, "").trim();
+    }
+
+    function readVerifiedValue(profile, rawCnic) {
+        const marker = String(profile && (profile.verified || profile.verificationStatus || profile.verify || "") || "").toLowerCase();
+        return (profile && profile.verified === true) || marker === "v" || marker === "verified" || /v/i.test(String(rawCnic || ""));
+    }
+
+    function normalizeProfile(profile, docId) {
+        const p = Object.assign({}, profile || {});
+        const rawCnic = String(p.cnic || p.CNIC || p.id || docId || "").trim();
+        const rawFatherCnic = String(p.fatherCNIC || p.fatherCnic || p.father_cnic || "").trim();
+        p.verified = readVerifiedValue(p, rawCnic);
+        p.verificationStatus = p.verified ? "v" : "n";
+        p.cnic = cleanRealtimeCnic(rawCnic);
+        p.fatherCNIC = cleanRealtimeCnic(rawFatherCnic);
+        p.name = String(p.name || p.fullName || "").trim();
+        p.status = p.status || "alive";
+        if (p.status === "alive") p.deathDate = "";
+        return p;
+    }
+
+    function profileDocId(profile) {
+        const id = cleanRealtimeCnic(profile && (profile.cnic || profile.CNIC || profile.id) || "");
+        return id || null;
+    }
+
+    function mergeProfilesByCnic(list) {
+        const map = new Map();
+        (Array.isArray(list) ? list : []).forEach((profile) => {
+            const p = normalizeProfile(profile);
+            if (!p.cnic) return;
+            map.set(p.cnic, Object.assign({}, map.get(p.cnic) || {}, p));
+        });
+        if (!map.has("ROOT001")) map.set("ROOT001", Object.assign({}, DEFAULT_ROOT_PROFILE));
+        return Array.from(map.values()).sort((a, b) => String(a.cnic).localeCompare(String(b.cnic)));
+    }
+
+    function persistProfilesLocal(nextProfiles) {
+        profiles = mergeProfilesByCnic(nextProfiles);
+        try {
+            localStorage.setItem("profiles", JSON.stringify(profiles));
+        } catch (err) {
+            console.warn("Could not cache profiles locally:", err);
+        }
+    }
+
+    function rerenderRealtimeViews() {
+        try {
+            if (window.location.pathname.includes("funds.html")) {
+                if (typeof renderFunds === "function") renderFunds();
+                return;
+            }
+            if (typeof renderTree === "function") renderTree();
+            if (typeof updateVoteSummary === "function") updateVoteSummary();
+        } catch (err) {
+            console.error("Render after realtime update failed:", err);
+        }
+    }
+
+    async function uploadProfilesToFirestore(list, options = {}) {
+        const db = getFirestoreDb();
+        if (!db) {
+            persistProfilesLocal(list);
+            return { saved: 0, offline: true };
+        }
+
+        const cleanProfiles = mergeProfilesByCnic(list);
+        const chunkSize = 400;
+        let saved = 0;
+
+        for (let i = 0; i < cleanProfiles.length; i += chunkSize) {
+            const batch = db.batch();
+            cleanProfiles.slice(i, i + chunkSize).forEach((profile) => {
+                const id = profileDocId(profile);
+                if (!id) return;
+                batch.set(db.collection("profiles").doc(id), profile, { merge: true });
+                saved++;
+            });
+            await batch.commit();
+        }
+
+        if (!options.skipLocal) persistProfilesLocal(cleanProfiles);
+        return { saved, offline: false };
+    }
+
+    async function deleteProfileFromFirestoreNow(cnic) {
+        const id = cleanRealtimeCnic(cnic);
+        if (!id) return;
+
+        const db = getFirestoreDb();
+        if (db) {
+            const batch = db.batch();
+            const queuedDeletes = new Set();
+            const queueDelete = (ref) => {
+                if (!ref || queuedDeletes.has(ref.path)) return;
+                queuedDeletes.add(ref.path);
+                batch.delete(ref);
+            };
+            queueDelete(db.collection("profiles").doc(id));
+            const snapshot = await db.collection("profiles").get();
+            snapshot.forEach((doc) => {
+                const data = doc.data() || {};
+                if (cleanRealtimeCnic(doc.id) === id || cleanRealtimeCnic(data.cnic || data.CNIC || data.id) === id) {
+                    queueDelete(doc.ref);
+                }
+            });
+            await batch.commit();
+        }
+
+        persistProfilesLocal((profiles || []).filter((p) => cleanRealtimeCnic(p.cnic) !== id));
+        rerenderRealtimeViews();
+        if (typeof showNotify === "function") showNotify("Deleted", "Profile deleted from all devices.", "success");
+    }
+
+    function deleteProfileFromFirestore(cnic) {
+        const runDelete = () => deleteProfileFromFirestoreNow(cnic).catch((err) => {
+            console.error("Delete error:", err);
+            if (typeof showNotify === "function") showNotify("Delete Error", "Profile delete nahi ho saka.");
+        });
+
+        if (typeof showConfirm === "function") {
+            showConfirm(runDelete);
+        } else if (confirm("Are you sure you want to delete this profile?")) {
+            runDelete();
+        }
+    }
+
+    async function seedFirestoreIfEmpty(db, snapshot) {
+        if (!snapshot.empty) return false;
+
+        const cachedProfiles = mergeProfilesByCnic(profiles && profiles.length ? profiles : [DEFAULT_ROOT_PROFILE]);
+        if (!initialUploadDone && cachedProfiles.length > 1) {
+            initialUploadDone = true;
+            await uploadProfilesToFirestore(cachedProfiles, { skipLocal: true });
+            return true;
+        }
+
+        await db.collection("profiles").doc("ROOT001").set(DEFAULT_ROOT_PROFILE, { merge: true });
+        return true;
+    }
+
+    function startProfilesRealtime() {
+        if (realtimeStarted) return;
+
+        const db = getFirestoreDb();
+        if (!db) {
+            persistProfilesLocal(profiles && profiles.length ? profiles : [DEFAULT_ROOT_PROFILE]);
+            rerenderRealtimeViews();
+            return;
+        }
+
+        realtimeStarted = true;
+        if (realtimeUnsubscribe) realtimeUnsubscribe();
+
+        realtimeUnsubscribe = db.collection("profiles").onSnapshot(async (snapshot) => {
+            try {
+                const seeded = await seedFirestoreIfEmpty(db, snapshot);
+                if (seeded) return;
+
+                const cloudProfiles = [];
+                snapshot.forEach((doc) => cloudProfiles.push(normalizeProfile(doc.data(), doc.id)));
+                persistProfilesLocal(cloudProfiles);
+                isDataLoaded = true;
+                console.log("Firestore realtime profiles loaded:", profiles.length);
+                rerenderRealtimeViews();
+            } catch (err) {
+                console.error("Realtime snapshot error:", err);
+            }
+        }, (err) => {
+            console.error("Firestore realtime listener error:", err);
+            realtimeStarted = false;
+        });
+    }
+
+    function getFormValue(id) {
+        return (document.getElementById(id)?.value || "").trim();
+    }
+
+    async function saveProfileRealtime(photoData) {
+        try {
+            const editCnicRaw = getFormValue("editCnic");
+            const editCnic = cleanRealtimeCnic(editCnicRaw);
+            const rawCnic = getFormValue("cnic");
+            const cnic = cleanRealtimeCnic(rawCnic);
+            const rawFatherCnic = getFormValue("fatherCnic");
+            const fatherCnic = cleanRealtimeCnic(rawFatherCnic);
+            const verifiedChoice = (document.getElementById("verificationStatus")?.value || "n").toLowerCase() === "v" || /v/i.test(rawCnic);
+            const name = getFormValue("name");
+            const status = document.querySelector('input[name="status"]:checked')?.value || "alive";
+
+            if (!name || !cnic || !status) {
+                if (typeof showNotify === "function") showNotify("Required Data", "Name, CNIC and status are required.");
+                return;
+            }
+
+            const existingConflict = profiles.find((p) => cleanRealtimeCnic(p.cnic) === cnic && cleanRealtimeCnic(p.cnic) !== editCnic);
+            if (existingConflict) {
+                if (typeof showNotify === "function") showNotify("Duplicate CNIC", `This CNIC "${cnic}" already exists.`);
+                return;
+            }
+
+            const fatherProfile = profiles.find((p) => cleanRealtimeCnic(p.cnic) === fatherCnic);
+            if (fatherProfile && isFemaleProfile(fatherProfile)) {
+                if (typeof showNotify === "function") {
+                    showNotify("Invalid Father", "Female profile ke under child/profile add nahi ho sakta.");
+                }
+                return;
+            }
+
+            const oldProfile = editCnic ? profiles.find((p) => cleanRealtimeCnic(p.cnic) === editCnic) : null;
+            const profileData = normalizeProfile({
+                profession: getFormValue("profession"),
+                name,
+                fatherName: getFormValue("fatherName"),
+                cnic,
+                fatherCNIC: fatherCnic,
+                verified: verifiedChoice,
+                verificationStatus: verifiedChoice ? "v" : "n",
+                bloodGroup: document.getElementById("bloodGroup")?.value || "",
+                phone: getFormValue("phone"),
+                address: getFormValue("address"),
+                dob: document.getElementById("dob")?.value || "",
+                gender: document.getElementById("gender")?.value || "",
+                married: document.querySelector('input[name="married"]:checked')?.value || "",
+                spouseCnic: getFormValue("spouseCnic"),
+                spouseName: getFormValue("spouseName"),
+                status,
+                deathDate: document.getElementById("deathDate")?.value || "",
+                shajraLine: getFormValue("addShajraLine"),
+                note: getFormValue("note"),
+                photo: photoData || oldProfile?.photo || ""
+            });
+
+            const db = getFirestoreDb();
+            if (db) {
+                const batch = db.batch();
+                batch.set(db.collection("profiles").doc(cnic), profileData, { merge: true });
+                if (editCnic && editCnic !== cnic) {
+                    batch.delete(db.collection("profiles").doc(editCnic));
+                }
+                if (editCnicRaw && editCnicRaw !== cnic && editCnicRaw !== editCnic) {
+                    batch.delete(db.collection("profiles").doc(editCnicRaw));
+                }
+                await batch.commit();
+            }
+
+            const nextProfiles = (profiles || []).filter((p) => ![editCnic, cnic, editCnicRaw].filter(Boolean).includes(cleanRealtimeCnic(p.cnic)) && String(p.cnic) !== String(editCnicRaw));
+            nextProfiles.push(profileData);
+            persistProfilesLocal(nextProfiles);
+            const cnicInput = document.getElementById("cnic");
+            const fatherInput = document.getElementById("fatherCnic");
+            if (cnicInput) cnicInput.value = cnic;
+            if (fatherInput) fatherInput.value = fatherCnic;
+
+            if (typeof closeForm === "function") closeForm();
+            rerenderRealtimeViews();
+            if (typeof showNotify === "function") {
+                showNotify("Success", editCnic ? "Profile updated on all devices." : "Profile added on all devices.", "success");
+            }
+        } catch (err) {
+            console.error("Realtime save profile error:", err);
+            if (typeof showNotify === "function") showNotify("Firestore Error", "Profile save/sync failed.");
+        }
+    }
+
+    function parseCsvLine(line) {
+        return String(line || "")
+            .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+            .map((value) => value.replace(/^"|"$/g, "").replace(/""/g, '"').trim());
+    }
+
+    async function importBackupRealtime(event) {
+        const fileInput = document.getElementById("importBackup");
+        const file = event?.target?.files?.[0];
+        if (!file) {
+            alert("No file selected! Please choose a CSV file.");
+            return;
+        }
+        if (!file.name.toLowerCase().endsWith(".csv")) {
+            alert("Invalid file type! Please select a CSV file.");
+            return;
+        }
+
+        try {
+            const text = await file.text();
+            const cleanText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+            const lines = cleanText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            if (lines.length < 2) {
+                alert("CSV file is empty!");
+                return;
+            }
+
+            const headers = parseCsvLine(lines[0]);
+            const imported = [];
+            const skipped = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseCsvLine(lines[i]);
+                if (values.length < headers.length) {
+                    skipped.push(`Row ${i + 1}`);
+                    continue;
+                }
+
+                const obj = {};
+                headers.forEach((header, index) => {
+                    obj[header] = values[index] || "";
+                });
+
+                const profile = normalizeProfile(obj);
+                if (!profile.cnic || !profile.name) {
+                    skipped.push(`Row ${i + 1}`);
+                    continue;
+                }
+
+                imported.push(profile);
+            }
+
+            if (imported.length === 0) {
+                alert("No valid profiles found in CSV.");
+                return;
+            }
+
+            const mergedProfiles = mergeProfilesByCnic([...(profiles || []), ...imported]);
+            await uploadProfilesToFirestore(mergedProfiles);
+            rerenderRealtimeViews();
+
+            if (fileInput) fileInput.value = "";
+            alert(`${imported.length} profiles imported and synced to all devices.${skipped.length ? " Skipped: " + skipped.length : ""}`);
+        } catch (err) {
+            console.error("CSV realtime import error:", err);
+            alert("Error processing CSV: " + err.message);
+        }
+    }
+
+    saveProfiles = function saveProfilesRealtime() {
+        persistProfilesLocal(profiles || []);
+        uploadProfilesToFirestore(profiles || []).catch((err) => {
+            console.error("Firestore saveProfiles sync failed:", err);
+        });
+    };
+
+    listenProfilesRealtime = startProfilesRealtime;
+    listenToProfiles = startProfilesRealtime;
+    loadProfilesFromFirestore = async function loadProfilesFromFirestoreRealtime() {
+        startProfilesRealtime();
+    };
+    saveProfile = saveProfileRealtime;
+    deleteProfile = deleteProfileFromFirestore;
+    importBackup = importBackupRealtime;
+
+    window.saveProfiles = saveProfiles;
+    window.listenProfilesRealtime = listenProfilesRealtime;
+    window.listenToProfiles = listenToProfiles;
+    window.loadProfilesFromFirestore = loadProfilesFromFirestore;
+    window.saveProfile = saveProfile;
+    window.deleteProfile = deleteProfile;
+    window.importBackup = importBackup;
+
+    document.addEventListener("DOMContentLoaded", () => {
+        startProfilesRealtime();
+    });
+})();
+
+// ---------------------------------------------------------------------------
+// Female privacy and father-line guard.
+// Female profiles stay in Firestore for cpabk, but are hidden from all other
+// users in tree/search/profile views. No profile can be added under a female.
+// ---------------------------------------------------------------------------
+(function enforceFemaleProfileRules() {
+    function activeUser() {
+        try { return String(localStorage.getItem("currentUser") || "").toLowerCase(); }
+        catch (_) { return ""; }
+    }
+
+    function isCpabk() {
+        return activeUser() === "cpabk";
+    }
+
+    function isFemale(person) {
+        const gender = String(person && (person.gender || person.Gender || person.sex) || "").toLowerCase().trim();
+        return ["female", "f", "woman", "عورت"].includes(gender);
+    }
+
+    function canShow(person) {
+        return isCpabk() || !isFemale(person);
+    }
+
+    function getPhoto(person) {
+        if (person && person.photo) return person.photo;
+        return isFemale(person) ? "default_female.svg" : "default_male.svg";
+    }
+
+    function profileByCnic(cnic) {
+        return (Array.isArray(profiles) ? profiles : []).find((p) => String(p.cnic) === String(cnic));
+    }
+
+    function visibleChildren(parentCnic) {
+        const parent = profileByCnic(parentCnic);
+        if (parent && isFemale(parent)) return [];
+        return (Array.isArray(profiles) ? profiles : []).filter((p) => String(p.fatherCNIC) === String(parentCnic) && canShow(p));
+    }
+
+    const oldOpenForm = typeof window.openForm === "function" ? window.openForm : (typeof openForm === "function" ? openForm : null);
+    window.openForm = function guardedOpenForm(fatherCnic = "") {
+        const father = fatherCnic ? profileByCnic(fatherCnic) : null;
+        if (father && isFemale(father)) {
+            alert("Female profile ke under new profile add nahi ho sakti. Tree father line se chalega.");
+            return;
+        }
+        if (oldOpenForm) return oldOpenForm(fatherCnic);
+    };
+    try { openForm = window.openForm; } catch (_) {}
+
+    const oldShowProfile = typeof window.showProfile === "function" ? window.showProfile : (typeof showProfile === "function" ? showProfile : null);
+    window.showProfile = function guardedShowProfile(cnic) {
+        const person = profileByCnic(cnic);
+        if (person && !canShow(person)) {
+            alert("Only cpabk can view female profiles.");
+            return;
+        }
+        if (oldShowProfile) return oldShowProfile(cnic);
+    };
+    try { showProfile = window.showProfile; } catch (_) {}
+
+    function buildVisibleTree(parentCnic) {
+        return visibleChildren(parentCnic).map((child) => {
+            const addButton = isFemale(child) ? "" : `<button class="add-btn" onclick="window.openForm('${child.cnic}')">+</button>`;
+            const adminButtons = isCpabk() ? `
+                <button class="edit-btn" data-action="edit" data-cnic="${child.cnic}">Edit</button>
+                <button class="delete-btn" data-action="delete" data-cnic="${child.cnic}">Delete</button>
+            ` : "";
+            return `
+                <li>
+                    <div class="node" data-cnic="${child.cnic}"${typeof getNodeStyle === "function" ? getNodeStyle(child.cnic) : ""}>
+                        <img src="${getPhoto(child)}" class="profile-photo">
+                        ${typeof getCrownHTML === "function" ? getCrownHTML(child.cnic) : ""} ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(child.name, child) : (child.name || "")}
+                        <div class="profession">${child.profession || ""}</div>
+                        <div class="node-actions">
+                            ${addButton}
+                            <button class="edit-btn" onclick="window.showProfile('${child.cnic}')">View</button>
+                            ${adminButtons}
+                            <button class="edit-btn" data-action="color" data-cnic="${child.cnic}">Color</button>
+                            <button class="edit-btn" data-action="crown" data-cnic="${child.cnic}">KING</button>
+                            <button class="edit-btn" onclick="showSubTree('${child.cnic}')">Tree</button>
+                        </div>
+                    </div>
+                    <ul id="children-${child.cnic}">${buildVisibleTree(child.cnic)}</ul>
+                </li>`;
+        }).join("");
+    }
+
+    window.renderTree = function guardedRenderTree(startCNIC = "ROOT001") {
+        const container = document.getElementById("treeContainer");
+        if (!container) return;
+
+        const root = profileByCnic(startCNIC) || (Array.isArray(profiles) ? profiles.find(canShow) : null);
+        if (!root || !canShow(root)) {
+            container.innerHTML = "<p>No profiles available to display.</p>";
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="tree">
+                <ul>
+                    <li>
+                        <div class="node root-node" data-cnic="${root.cnic}"${typeof getNodeStyle === "function" ? getNodeStyle(root.cnic) : ""} onclick="window.showProfile('${root.cnic}')">
+                            ${root.photo ? `<img src="${root.photo}" style="width:40px;height:40px;border-radius:50%;"><br>` : ""}
+                            ${typeof getCrownHTML === "function" ? getCrownHTML(root.cnic) : ""} ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(root.name, root) : (root.name || "")}
+                        </div>
+                        <ul id="children-${root.cnic}">${buildVisibleTree(root.cnic)}</ul>
+                    </li>
+                </ul>
+            </div>`;
+
+        if (typeof updateVoteSummary === "function") {
+            try { updateVoteSummary(); } catch (_) {}
+        }
+    };
+    try { renderTree = window.renderTree; } catch (_) {}
+
+    document.addEventListener("input", function guardedSearch(e) {
+        if (!e.target || e.target.id !== "searchBox") return;
+        e.stopImmediatePropagation();
+
+        const q = e.target.value.toLowerCase().trim();
+        const resultsBox = document.getElementById("searchResults");
+        if (!resultsBox) return;
+        if (!q) {
+            resultsBox.style.display = "none";
+            resultsBox.innerHTML = "";
+            return;
+        }
+
+        const bloodGroups = ["o+","o-","a+","a-","b+","b-","ab+","ab-"];
+        const source = (Array.isArray(profiles) ? profiles : []).filter(canShow);
+        const results = bloodGroups.includes(q)
+            ? source.filter((p) => p.status === "alive" && String(p.bloodGroup || "").toLowerCase() === q)
+            : source.filter((p) =>
+                String(p.name || "").toLowerCase().includes(q) ||
+                String(p.cnic || "").toLowerCase().includes(q) ||
+                String(p.fatherName || "").toLowerCase().includes(q)
+            );
+
+        resultsBox.innerHTML = results.slice(0, 50).map((p) => `
+            <p onclick="window.showProfile('${p.cnic}');document.getElementById('searchBox').value='';document.getElementById('searchResults').style.display='none';">
+                ${typeof getNameWithVerifiedHTML === "function" ? getNameWithVerifiedHTML(p.name, p) : (p.name || "")} - ${p.cnic || ""} (${p.bloodGroup || ""})
+            </p>
+        `).join("") || "<p style='padding:8px;'>No result found</p>";
+        resultsBox.style.display = "block";
+    }, true);
+})();
