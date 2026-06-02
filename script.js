@@ -4,7 +4,7 @@ let isDataLoaded = false; // 🔥 important
 try {
     let profiles = JSON.parse(localStorage.getItem("profiles")) || [
         {
-            name: "👑حضرت سلطان ابوالخیر شاہ👑",
+            name: "👑ؒحضرت سلطان ابوالخیر شاہ👑",
             fatherName: "Sher Muhammad",
             cnic: "ROOT001",
             fatherCNIC: "ROOT1001",
